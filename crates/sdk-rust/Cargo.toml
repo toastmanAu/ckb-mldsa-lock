@@ -1,0 +1,19 @@
+[package]
+name = "ckb-mldsa-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "CKB ML-DSA-65 lock script SDK — keygen, signing, witness serialization"
+license = "MIT"
+repository = "https://github.com/toastmanAu/ckb-mldsa-lock"
+keywords = ["ckb", "nervos", "ml-dsa", "post-quantum", "lock-script"]
+
+[dependencies]
+ckb-mldsa-molecule = { path = "../molecule-types" }
+fips204 = { version = "0.4", features = ["default-rng"] }
+blake2b-ref = "0.3"
+hex = "0.4"
+thiserror = "1"
+zeroize = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+hex-literal = "0.4"

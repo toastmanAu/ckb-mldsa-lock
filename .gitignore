@@ -1,0 +1,25 @@
+# Build artifacts
+contracts/mldsa-lock/build/
+contracts/mldsa-lock/deps/
+contracts/mldsa-lock/tests/gen_test_vector
+contracts/mldsa-lock/tests/mock_tx*.json
+contracts/mldsa-lock/tests/gen_pass.log
+contracts/mldsa-lock/tests/gen_fail.log
+
+# Rust
+target/
+Cargo.lock
+
+# JS/TS
+node_modules/
+dist/
+*.js.map
+
+# Deploy artifacts (keep deployment.toml, ignore generated)
+deploy/deployment-info.json
+deploy/migrations/
+
+# Editor
+.vscode/
+.idea/
+*.swp

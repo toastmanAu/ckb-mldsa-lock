@@ -1,0 +1,9 @@
+[package]
+name = "ckb-mldsa-molecule"
+version = "0.1.0"
+edition = "2021"
+description = "Molecule serialization for CKB ML-DSA-65 witness types"
+license = "MIT"
+
+[dependencies]
+molecule = "0.8"

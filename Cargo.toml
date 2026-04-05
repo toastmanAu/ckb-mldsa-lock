@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crates/sdk-rust",
+    "crates/molecule-types",
+]
+resolver = "2"

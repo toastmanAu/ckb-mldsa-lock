@@ -1,0 +1,3 @@
+[submodule "contracts/mldsa-lock/vendor/mldsa-native"]
+	path = contracts/mldsa-lock/vendor/mldsa-native
+	url = https://github.com/pq-code-package/mldsa-native

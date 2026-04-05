@@ -1,0 +1,14 @@
+// ML-DSA lock script witness schema
+// v1: single-sig, ML-DSA-65 only
+
+array Byte [byte; 1];
+array Uint16 [byte; 2];
+
+table MldsaWitness {
+    version:   byte,      // must be 0x01
+    algo_id:   byte,      // 0x02 = ML-DSA
+    param_id:  byte,      // 0x02 = ML-DSA-65
+    flags:     byte,      // reserved, must be 0x00
+    pubkey:    bytes,     // ML-DSA-65 public key (1952 bytes)
+    signature: bytes,     // ML-DSA-65 signature (3309 bytes)
+}
