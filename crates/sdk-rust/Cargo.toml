@@ -17,3 +17,8 @@ zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 hex-literal = "0.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "sdk"
+harness = false
