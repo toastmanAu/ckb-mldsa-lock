@@ -3,6 +3,11 @@ target = "riscv64imac-unknown-none-elf"
 
 [target.riscv64imac-unknown-none-elf]
 rustflags = [
+    # CKB-VM implements RV64IMC + partial B extension, but does NOT implement
+    # the A (Atomic) extension. Disable A codegen so rustc doesn't emit
+    # `amoadd.w` / `lr.w` / `sc.w` etc., which would trap with
+    # InvalidInstruction at runtime.
+    "-C", "target-feature=-a",
     "-C", "link-arg=-s",
     "-C", "link-arg=--gc-sections",
     "-C", "link-arg=-T",

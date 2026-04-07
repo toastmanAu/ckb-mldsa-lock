@@ -15,7 +15,15 @@ SECTIONS {
         *(.text*)
     }
 
-    .rodata : ALIGN(8) {
+    /* .rodata MUST start on a page boundary (0x1000). Without this,
+     * a page can contain tail bytes of .text (R-E LOAD segment) AND the
+     * beginning of .rodata (R LOAD segment). CKB-VM loads LOAD segments
+     * at page granularity and freezes the first one it sees — the second
+     * then tries to write into a frozen page and the VM halts with
+     * MemWriteOnFreezedPage. */
+    . = ALIGN(0x1000);
+
+    .rodata : ALIGN(0x1000) {
         *(.rodata*)
         *(.srodata*)
     }
