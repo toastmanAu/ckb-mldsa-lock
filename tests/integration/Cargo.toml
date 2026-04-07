@@ -16,10 +16,5 @@ path = "src/lib.rs"
 
 [dev-dependencies]
 ckb-testtool = "1.1.1"
-ckb-fips204-utils = { path = "../../../code/key-vault-wasm/crates/ckb-fips204-utils", default-features = false, features = ["std", "verifying"] }
+ckb-fips204-utils = { path = "../../../code/key-vault-wasm/crates/ckb-fips204-utils", default-features = false, features = ["std", "verifying", "signing", "host-hashing"] }
 fips204 = { version = "0.4.6", features = ["default-rng", "ml-dsa-65"] }
-# Force ckb-hash's default features so blake2b-rs is linked in the host build.
-# ckb-fips204-utils sets default-features=false on ckb-hash for no_std contract
-# builds; our host tests need the std path, so we add ckb-hash as a direct dep
-# with defaults and Cargo unifies the feature set.
-ckb-hash = "0.200.0"
