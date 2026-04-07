@@ -49,9 +49,7 @@
 use std::process::ExitCode;
 
 use ckb_fips204_utils::{
-    ckb_tx_message_all_host::generate_ckb_tx_message_all_host, lengths,
-    signing::{derive_lock_args, sign},
-    ParamId,
+    ckb_tx_message_all_host::generate_ckb_tx_message_all_host, is_falcon, lengths, ParamId,
 };
 use ckb_jsonrpc_types as json_types;
 use ckb_types::{
@@ -84,9 +82,22 @@ const MLDSA65_LOCK_V2_CODE_HASH: H256 =
 const MLDSA87_LOCK_V2_CODE_HASH: H256 =
     h256!("0x37dc2a33c484de9b2378a07f926e78083e53a0322bc05e78681bb47510607e15");
 
+// Falcon variants deployed 2026-04-08 session 7 (tx 0x0e15396cff81e3... at
+// block 20,691,215). Same rule as the ML-DSA constants: these are SCRIPT
+// HASHES (from `gen-txs` pre-broadcast output), NOT the TYPE_ID
+// discriminators visible as `tx.outputs[i].type.args` post-broadcast.
+const FALCON512_LOCK_V2_CODE_HASH: H256 =
+    h256!("0xbf949c7980454296ca2d537471fd86b746f5fa86df50533644d10c9b06a2fbd4");
+const FALCON1024_LOCK_V2_CODE_HASH: H256 =
+    h256!("0xbf26aaceee7237aad36e984c04917dc0d94ee46d6a84965063509729716cfd10");
+
 /// The 2026-04-08 deploy tx that holds the v2 cells.
 const DEFAULT_DEPLOY_TX: H256 =
     h256!("0xb1a05b5000cecdcb51a1518e96cb13d81a1b28cea21d861a64081430cb35ae88");
+
+/// The Falcon deploy tx (session 7).
+const DEFAULT_FALCON_DEPLOY_TX: H256 =
+    h256!("0x0e15396cff81e32b8abbcb37f9cbdce87b7edc60fc4150220c081bf85822bbc0");
 
 /// Default tx fee in shannons. 100_000 shannons = 0.001 CKB — generous
 /// headroom over the real cost of a single-input single-output v2 spend.
@@ -167,7 +178,7 @@ struct Opts {
     rpc: String,
     param_id: String,
     code_hash: Option<String>,
-    deploy_tx: String,
+    deploy_tx: Option<String>,
     deploy_idx: Option<u32>,
     input_tx: Option<String>,
     to: Option<String>,
@@ -183,7 +194,7 @@ fn parse_opts(args: &[String]) -> Opts {
         rpc: DEFAULT_RPC.to_string(),
         param_id: "65".to_string(),
         code_hash: None,
-        deploy_tx: format!("{DEFAULT_DEPLOY_TX:#x}"),
+        deploy_tx: None,
         deploy_idx: None,
         // secp256k1_blake160_sighash_all type_id on both testnet and mainnet
         recipient_code_hash:
@@ -218,7 +229,7 @@ fn parse_opts(args: &[String]) -> Opts {
                 i += 2;
             }
             "--deploy-tx" => {
-                o.deploy_tx = next().unwrap_or_default();
+                o.deploy_tx = next();
                 i += 2;
             }
             "--deploy-idx" => {
@@ -266,8 +277,13 @@ fn cmd_derive_address(opts: &mut Opts) -> Result<(), String> {
     let code_hash_str = resolve_code_hash(opts, param_id);
     let code_hash = parse_h256(&code_hash_str, "--code-hash")?;
 
-    let (_pk_bytes, lock_args) = derive_lock_args(&seed, param_id, opts.index)
-        .map_err(|e| format!("derive_lock_args failed: {e}"))?;
+    let (_pk_bytes, lock_args) = if is_falcon(param_id) {
+        ckb_fips204_utils::falcon_signing::derive_lock_args(&seed, param_id, opts.index)
+            .map_err(|e| format!("falcon derive_lock_args failed: {e}"))?
+    } else {
+        ckb_fips204_utils::signing::derive_lock_args(&seed, param_id, opts.index)
+            .map_err(|e| format!("ml-dsa derive_lock_args failed: {e}"))?
+    };
 
     // Build the CKB address from (code_hash, hash_type=type, args=lock_args).
     let address = encode_testnet_full_address(&code_hash, HashTypeByte::Type, &lock_args);
@@ -293,7 +309,14 @@ fn cmd_spend(opts: &mut Opts) -> Result<(), String> {
     let param_id = parse_param_id(&opts.param_id)?;
     let code_hash_str = resolve_code_hash(opts, param_id);
     let code_hash = parse_h256(&code_hash_str, "--code-hash")?;
-    let deploy_tx = parse_h256(&opts.deploy_tx, "--deploy-tx")?;
+    // For Falcon variants, default the deploy tx to the Falcon deploy if
+    // the caller didn't override it. ML-DSA variants default to the
+    // session-4 ML-DSA deploy tx.
+    let deploy_tx_str = opts
+        .deploy_tx
+        .clone()
+        .unwrap_or_else(|| format!("{:#x}", default_deploy_tx(param_id)));
+    let deploy_tx = parse_h256(&deploy_tx_str, "--deploy-tx")?;
     let deploy_idx = opts.deploy_idx.unwrap_or_else(|| default_deploy_idx(param_id));
     let input_spec = opts
         .input_tx
@@ -314,8 +337,13 @@ fn cmd_spend(opts: &mut Opts) -> Result<(), String> {
         .map_err(|_| format!("invalid --input-tx index: {input_idx}"))?;
 
     // 1. Derive the v2 keypair + lock script for the selected variant.
-    let (pk_bytes, lock_args) = derive_lock_args(&seed, param_id, opts.index)
-        .map_err(|e| format!("derive_lock_args: {e}"))?;
+    let (pk_bytes, lock_args) = if is_falcon(param_id) {
+        ckb_fips204_utils::falcon_signing::derive_lock_args(&seed, param_id, opts.index)
+            .map_err(|e| format!("falcon derive_lock_args: {e}"))?
+    } else {
+        ckb_fips204_utils::signing::derive_lock_args(&seed, param_id, opts.index)
+            .map_err(|e| format!("ml-dsa derive_lock_args: {e}"))?
+    };
     let (pk_len, sig_len, _) = lengths(param_id);
 
     let v2_lock_script = Script::new_builder()
@@ -477,9 +505,16 @@ fn cmd_spend(opts: &mut Opts) -> Result<(), String> {
         .map_err(|e| format!("generate_ckb_tx_message_all_host: {e:?}"))?;
     eprintln!("\nCighashAll stream: {} bytes", cighash_all_bytes.len());
 
-    // 7. Sign with the chosen variant.
-    let real_witness_lock_bytes = sign(&seed, param_id, opts.index, &cighash_all_bytes)
-        .map_err(|e| format!("sign: {e}"))?;
+    // 7. Sign with the chosen variant — Falcon uses a separate signer
+    //    because it has a different message pipeline (no FIPS-204 M')
+    //    and needs hardware FP for keygen.
+    let real_witness_lock_bytes = if is_falcon(param_id) {
+        ckb_fips204_utils::falcon_signing::sign(&seed, param_id, opts.index, &cighash_all_bytes)
+            .map_err(|e| format!("falcon sign: {e}"))?
+    } else {
+        ckb_fips204_utils::signing::sign(&seed, param_id, opts.index, &cighash_all_bytes)
+            .map_err(|e| format!("ml-dsa sign: {e}"))?
+    };
     assert_eq!(real_witness_lock_bytes.len(), 1 + pk_len + sig_len);
     assert_eq!(
         &real_witness_lock_bytes[1..1 + pk_len],
@@ -710,7 +745,11 @@ fn parse_param_id(s: &str) -> Result<ParamId, String> {
         "44" => Ok(ParamId::Mldsa44),
         "65" => Ok(ParamId::Mldsa65),
         "87" => Ok(ParamId::Mldsa87),
-        other => Err(format!("--param-id must be 44, 65, or 87 (got {other})")),
+        "falcon512" | "f512" | "512" => Ok(ParamId::Falcon512),
+        "falcon1024" | "f1024" | "1024" => Ok(ParamId::Falcon1024),
+        other => Err(format!(
+            "--param-id must be 44, 65, 87, falcon512, or falcon1024 (got {other})"
+        )),
     }
 }
 
@@ -722,16 +761,31 @@ fn resolve_code_hash(opts: &Opts, param_id: ParamId) -> String {
         ParamId::Mldsa44 => format!("{MLDSA44_LOCK_V2_CODE_HASH:#x}"),
         ParamId::Mldsa65 => format!("{MLDSA65_LOCK_V2_CODE_HASH:#x}"),
         ParamId::Mldsa87 => format!("{MLDSA87_LOCK_V2_CODE_HASH:#x}"),
+        ParamId::Falcon512 => format!("{FALCON512_LOCK_V2_CODE_HASH:#x}"),
+        ParamId::Falcon1024 => format!("{FALCON1024_LOCK_V2_CODE_HASH:#x}"),
     }
 }
 
-/// Per-variant default deploy cell output index — matches the order the
-/// three cells appear in deploy tx 0xb1a05b5000...: 44 at 0, 65 at 1, 87 at 2.
+/// Per-variant default deploy cell output index + deploy tx.
+///
+/// ML-DSA variants are in tx b1a05b50 (session 4): 44@0, 65@1, 87@2.
+/// Falcon variants are in tx 0e15396c (session 7): 512@0, 1024@1.
 fn default_deploy_idx(param_id: ParamId) -> u32 {
     match param_id {
         ParamId::Mldsa44 => 0,
         ParamId::Mldsa65 => 1,
         ParamId::Mldsa87 => 2,
+        ParamId::Falcon512 => 0,
+        ParamId::Falcon1024 => 1,
+    }
+}
+
+/// Per-variant default deploy tx hash. Falcon variants live in a different
+/// deploy tx than the ML-DSA variants.
+fn default_deploy_tx(param_id: ParamId) -> H256 {
+    match param_id {
+        ParamId::Mldsa44 | ParamId::Mldsa65 | ParamId::Mldsa87 => DEFAULT_DEPLOY_TX,
+        ParamId::Falcon512 | ParamId::Falcon1024 => DEFAULT_FALCON_DEPLOY_TX,
     }
 }
 

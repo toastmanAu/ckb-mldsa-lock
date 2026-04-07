@@ -1,0 +1,35 @@
+[package]
+name = "falcon-lock-v2"
+version = "0.1.0"
+edition = "2021"
+description = "CKB Falcon / FN-DSA (FIPS 206 draft) lock script — 512 + 1024, SPHINCS+/ML-DSA structural parallel"
+license = "MIT"
+repository = "https://github.com/toastmanAu/ckb-mldsa-lock"
+
+# Standalone crate — intentionally NOT a workspace member. Same isolation
+# rationale as contracts/mldsa-lock-v2/.
+[workspace]
+
+[[bin]]
+name = "falcon512-lock-v2"
+path = "bin/falcon512.rs"
+
+[[bin]]
+name = "falcon1024-lock-v2"
+path = "bin/falcon1024.rs"
+
+[dependencies]
+ckb-std = "0.17.1"
+# Same crate as mldsa-lock-v2, gated on the new `falcon` feature so the
+# verify match arms light up. `verifying` is required by `falcon` (the
+# verify entry-point lives in `verifying.rs`); `ckb-vm` pulls in the
+# CighashAll streamer used by entry.rs.
+ckb-fips204-utils = { path = "../../../code/key-vault-wasm/crates/ckb-fips204-utils", default-features = false, features = ["verifying", "falcon", "ckb-vm"] }
+
+[profile.release]
+opt-level = "z"      # smallest binary
+lto = true           # link-time optimisation across crates
+codegen-units = 1    # single CGU for best LTO
+panic = "abort"      # no unwind tables
+strip = true         # strip symbols
+overflow-checks = true
