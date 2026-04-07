@@ -67,8 +67,14 @@ use ckb_types::{
 
 const DEFAULT_RPC: &str = "https://testnet.ckb.dev";
 
+// This is the HASH of the type script `{code_hash: TYPE_ID_CODE_HASH,
+// hash_type: type, args: <discriminator>}` that lives on the deployed code
+// cell at deploy_tx:1. When consumer lock scripts use `hash_type: "type"`,
+// they must set `code_hash` to this value — NOT to the type script's args.
+// The on-chain `type.args` value `0xece0f0e37a3ae5029e3558102e59f34d1b47a5b2fa18c41b192cdd8d435915d7`
+// is the TYPE_ID discriminator, a completely different thing.
 const MLDSA65_LOCK_V2_CODE_HASH: H256 =
-    h256!("0xece0f0e37a3ae5029e3558102e59f34d1b47a5b2fa18c41b192cdd8d435915d7");
+    h256!("0xda3e5dc140c25b62ba0697fa83dc866e6c8e29eba4d9d91df5735bf4f06960a7");
 
 /// The 2026-04-08 deploy tx that holds the v2 cells.
 const DEFAULT_DEPLOY_TX: H256 =
@@ -477,11 +483,13 @@ fn rpc_fetch_cell(
     tx_hash: &H256,
     output_idx: u32,
 ) -> Result<(CellOutput, Bytes, [u8; 32]), String> {
+    // verbosity 0x2 = full JSON transaction view (0x0 returns hex-serialized
+    // bytes which we don't want; 0x1 returns status only).
     let req = serde_json::json!({
         "id": 1,
         "jsonrpc": "2.0",
         "method": "get_transaction",
-        "params": [format!("{tx_hash:#x}"), "0x0"],
+        "params": [format!("{tx_hash:#x}"), "0x2"],
     });
     let resp: serde_json::Value = ureq::post(rpc)
         .send_json(req)
@@ -494,10 +502,12 @@ fn rpc_fetch_cell(
             resp
         )
     })?;
-    let jtx: json_types::Transaction = serde_json::from_value(tx)
+    // verbosity=2 returns a TransactionView (which wraps the inner Transaction
+    // plus a hash field); Transaction alone rejects the `hash` key.
+    let jtx: json_types::TransactionView = serde_json::from_value(tx)
         .map_err(|e| format!("parse json transaction: {e}"))?;
-    let outputs = &jtx.outputs;
-    let outputs_data = &jtx.outputs_data;
+    let outputs = &jtx.inner.outputs;
+    let outputs_data = &jtx.inner.outputs_data;
     if output_idx as usize >= outputs.len() {
         return Err(format!(
             "output index {output_idx} out of range (tx has {} outputs)",
