@@ -1,0 +1,36 @@
+[package]
+name = "mldsa-lock-v2"
+version = "0.1.0"
+edition = "2021"
+description = "CKB ML-DSA (FIPS 204) lock script — v2, SPHINCS+-style digest pipeline"
+license = "MIT"
+repository = "https://github.com/toastmanAu/ckb-mldsa-lock"
+
+# Standalone crate — intentionally NOT a workspace member. The rest of the
+# ckb-mldsa-lock repo targets the host (std), while this crate targets
+# riscv64imac-unknown-none-elf. Isolating avoids cross-target conflicts.
+[workspace]
+
+[[bin]]
+name = "mldsa44-lock-v2"
+path = "bin/mldsa44.rs"
+
+[[bin]]
+name = "mldsa65-lock-v2"
+path = "bin/mldsa65.rs"
+
+[[bin]]
+name = "mldsa87-lock-v2"
+path = "bin/mldsa87.rs"
+
+[dependencies]
+ckb-std = "0.17.1"
+ckb-fips204-utils = { path = "../../../code/key-vault-wasm/crates/ckb-fips204-utils", default-features = false, features = ["verifying", "ckb-vm"] }
+
+[profile.release]
+opt-level = "z"      # smallest binary
+lto = true           # link-time optimisation across crates
+codegen-units = 1    # single CGU for best LTO
+panic = "abort"      # no unwind tables
+strip = true         # strip symbols
+overflow-checks = true
