@@ -196,4 +196,20 @@ fn mldsa65_roundtrip_sign_then_verify_tx() {
              streams at a known fixture to find the divergent segment."
         ),
     }
+
+    // 11. Dump the signed tx to /tmp/mldsa65_signed_tx.json so ckb-debugger
+    //     can run the same tx through a real CKB-VM instance outside
+    //     ckb-testtool, for an independent sanity check (and accurate cycle
+    //     count / flamegraph if requested).
+    //
+    //     Run afterwards:
+    //         ckb-debugger --tx-file /tmp/mldsa65_signed_tx.json \
+    //                      --script input.0.lock
+    let repr_mock = context
+        .dump_tx(&signed_tx)
+        .expect("dump_tx for ckb-debugger");
+    let json = serde_json::to_string_pretty(&repr_mock).expect("json serialize");
+    std::fs::write("/tmp/mldsa65_signed_tx.json", json)
+        .expect("write /tmp/mldsa65_signed_tx.json");
+    eprintln!("signed tx dumped to /tmp/mldsa65_signed_tx.json");
 }
