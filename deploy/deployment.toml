@@ -1,9 +1,41 @@
+# CKB deploy config for the ckb-mldsa-lock project.
+#
+# - `mldsa-lock` (v1, C) is already deployed to testnet under the type_id
+#   recorded in deploy/migrations/*. ckb-cli will detect the migration and
+#   leave it alone unless `force_redeploy = true` is added.
+# - `mldsa44-lock-v2`, `mldsa65-lock-v2`, `mldsa87-lock-v2` are the three
+#   new v2 Rust binaries from contracts/mldsa-lock-v2. They all share the
+#   same ckb-fips204-utils core and differ only by the `ParamId` variant
+#   baked into each bin's entry.
+
+#
+# NOTE: the v1 `mldsa-lock` cell is INTENTIONALLY not listed in this file.
+# It stays deployed on testnet at its original tx_hash 0xba4a6560... owned
+# by an account we no longer have the password for. Including it here
+# causes ckb-cli to try to "redeploy" it (spending the original cell)
+# which would require signing with the locked-out account — so we drop it.
+# The deployed v1 cell is immutable code and keeps serving v1 consumers
+# regardless of what this file contains.
+# Historical migration state preserved in deploy/migrations.v1-backup/.
+
 [[cells]]
-name = "mldsa-lock"
+name = "mldsa44-lock-v2"
 enable_type_id = true
-location = { file = "contracts/mldsa-lock/build/mldsa-lock" }
+location = { file = "contracts/mldsa-lock-v2/target/riscv64imac-unknown-none-elf/release/mldsa44-lock-v2" }
+
+[[cells]]
+name = "mldsa65-lock-v2"
+enable_type_id = true
+location = { file = "contracts/mldsa-lock-v2/target/riscv64imac-unknown-none-elf/release/mldsa65-lock-v2" }
+
+[[cells]]
+name = "mldsa87-lock-v2"
+enable_type_id = true
+location = { file = "contracts/mldsa-lock-v2/target/riscv64imac-unknown-none-elf/release/mldsa87-lock-v2" }
 
 [lock]
+# Fresh deploy account created 2026-04-08 after the original wallet was
+# locked out (forgotten password). Funded to 300,000 CKB via testnet faucet.
 code_hash = "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8"
-args = "0x98ecd69bb16e590486d6109bd129caf6b7ca02fe"
+args = "0xa776bf02d19cafa3749d906cc2c9ab1cf1e80ff7"
 hash_type = "type"
