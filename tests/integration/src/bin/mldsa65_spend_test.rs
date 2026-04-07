@@ -73,16 +73,20 @@ const DEFAULT_RPC: &str = "https://testnet.ckb.dev";
 // they must set `code_hash` to this value — NOT to the type script's args.
 // The on-chain `type.args` value `0xece0f0e37a3ae5029e3558102e59f34d1b47a5b2fa18c41b192cdd8d435915d7`
 // is the TYPE_ID discriminator, a completely different thing.
+// Per-variant code_hash (hash of the deployed cell's type script) and deploy
+// cell output index. Each is keyed on the ParamId variant ordering: 44, 65, 87.
+// Correct values from the 2026-04-08 testnet deploy
+// tx 0xb1a05b5000cecdcb51a1518e96cb13d81a1b28cea21d861a64081430cb35ae88.
+const MLDSA44_LOCK_V2_CODE_HASH: H256 =
+    h256!("0x1e9798b5545214d7c6bf9a23564847b671c40f3f91536608e7c2eadf782ba237");
 const MLDSA65_LOCK_V2_CODE_HASH: H256 =
     h256!("0xda3e5dc140c25b62ba0697fa83dc866e6c8e29eba4d9d91df5735bf4f06960a7");
+const MLDSA87_LOCK_V2_CODE_HASH: H256 =
+    h256!("0x37dc2a33c484de9b2378a07f926e78083e53a0322bc05e78681bb47510607e15");
 
 /// The 2026-04-08 deploy tx that holds the v2 cells.
 const DEFAULT_DEPLOY_TX: H256 =
     h256!("0xb1a05b5000cecdcb51a1518e96cb13d81a1b28cea21d861a64081430cb35ae88");
-
-/// mldsa65-lock-v2 sits at output index 1 of the deploy tx (output 0 is
-/// mldsa44, 1 is mldsa65, 2 is mldsa87, 3 is the change).
-const DEFAULT_DEPLOY_OUTPUT_INDEX: u32 = 1;
 
 /// Default tx fee in shannons. 100_000 shannons = 0.001 CKB — generous
 /// headroom over the real cost of a single-input single-output v2 spend.
@@ -139,9 +143,10 @@ MODES:
 
 COMMON OPTIONS:
     --seed <hex>        32-byte hex seed (required)
+    --param-id <n>      44 | 65 | 87 — which ML-DSA variant (default 65)
     --index <n>         HKDF account index (default 0)
     --rpc <url>         CKB RPC endpoint (default https://testnet.ckb.dev)
-    --code-hash <hex>   v2 mldsa65 type_id (default: baked in)
+    --code-hash <hex>   v2 lock code_hash (default: baked in for --param-id)
 
 SPEND-ONLY OPTIONS:
     --input-tx <hash>:<index>   v2-locked cell to spend (required)
@@ -160,11 +165,13 @@ struct Opts {
     seed: Option<String>,
     index: u32,
     rpc: String,
-    code_hash: String,
+    param_id: String,
+    code_hash: Option<String>,
     deploy_tx: String,
-    deploy_idx: u32,
+    deploy_idx: Option<u32>,
     input_tx: Option<String>,
     to: Option<String>,
+    to_capacity_ckb: Option<u64>,
     recipient_code_hash: String,
     recipient_hash_type: String,
     fee: u64,
@@ -174,9 +181,10 @@ fn parse_opts(args: &[String]) -> Opts {
     let mut o = Opts {
         index: 0,
         rpc: DEFAULT_RPC.to_string(),
-        code_hash: format!("{MLDSA65_LOCK_V2_CODE_HASH:#x}"),
+        param_id: "65".to_string(),
+        code_hash: None,
         deploy_tx: format!("{DEFAULT_DEPLOY_TX:#x}"),
-        deploy_idx: DEFAULT_DEPLOY_OUTPUT_INDEX,
+        deploy_idx: None,
         // secp256k1_blake160_sighash_all type_id on both testnet and mainnet
         recipient_code_hash:
             "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8".to_string(),
@@ -201,8 +209,12 @@ fn parse_opts(args: &[String]) -> Opts {
                 o.rpc = next().unwrap_or_default();
                 i += 2;
             }
+            "--param-id" => {
+                o.param_id = next().unwrap_or_default();
+                i += 2;
+            }
             "--code-hash" => {
-                o.code_hash = next().unwrap_or_default();
+                o.code_hash = next();
                 i += 2;
             }
             "--deploy-tx" => {
@@ -210,7 +222,7 @@ fn parse_opts(args: &[String]) -> Opts {
                 i += 2;
             }
             "--deploy-idx" => {
-                o.deploy_idx = next().and_then(|v| v.parse().ok()).unwrap_or(1);
+                o.deploy_idx = next().and_then(|v| v.parse().ok());
                 i += 2;
             }
             "--input-tx" => {
@@ -219,6 +231,10 @@ fn parse_opts(args: &[String]) -> Opts {
             }
             "--to" => {
                 o.to = next();
+                i += 2;
+            }
+            "--to-capacity" => {
+                o.to_capacity_ckb = next().and_then(|v| v.parse().ok());
                 i += 2;
             }
             "--recipient-code-hash" => {
@@ -246,9 +262,11 @@ fn parse_opts(args: &[String]) -> Opts {
 
 fn cmd_derive_address(opts: &mut Opts) -> Result<(), String> {
     let seed = require_seed(opts)?;
-    let code_hash = parse_h256(&opts.code_hash, "--code-hash")?;
+    let param_id = parse_param_id(&opts.param_id)?;
+    let code_hash_str = resolve_code_hash(opts, param_id);
+    let code_hash = parse_h256(&code_hash_str, "--code-hash")?;
 
-    let (_pk_bytes, lock_args) = derive_lock_args(&seed, ParamId::Mldsa65, opts.index)
+    let (_pk_bytes, lock_args) = derive_lock_args(&seed, param_id, opts.index)
         .map_err(|e| format!("derive_lock_args failed: {e}"))?;
 
     // Build the CKB address from (code_hash, hash_type=type, args=lock_args).
@@ -272,8 +290,11 @@ fn cmd_derive_address(opts: &mut Opts) -> Result<(), String> {
 
 fn cmd_spend(opts: &mut Opts) -> Result<(), String> {
     let seed = require_seed(opts)?;
-    let code_hash = parse_h256(&opts.code_hash, "--code-hash")?;
+    let param_id = parse_param_id(&opts.param_id)?;
+    let code_hash_str = resolve_code_hash(opts, param_id);
+    let code_hash = parse_h256(&code_hash_str, "--code-hash")?;
     let deploy_tx = parse_h256(&opts.deploy_tx, "--deploy-tx")?;
+    let deploy_idx = opts.deploy_idx.unwrap_or_else(|| default_deploy_idx(param_id));
     let input_spec = opts
         .input_tx
         .as_ref()
@@ -292,10 +313,10 @@ fn cmd_spend(opts: &mut Opts) -> Result<(), String> {
         .parse()
         .map_err(|_| format!("invalid --input-tx index: {input_idx}"))?;
 
-    // 1. Derive the v2 ML-DSA-65 keypair from seed, build the lock script.
-    let (pk_bytes, lock_args) = derive_lock_args(&seed, ParamId::Mldsa65, opts.index)
+    // 1. Derive the v2 keypair + lock script for the selected variant.
+    let (pk_bytes, lock_args) = derive_lock_args(&seed, param_id, opts.index)
         .map_err(|e| format!("derive_lock_args: {e}"))?;
-    let (pk_len, sig_len, _) = lengths(ParamId::Mldsa65);
+    let (pk_len, sig_len, _) = lengths(param_id);
 
     let v2_lock_script = Script::new_builder()
         .code_hash(Byte32::from_slice(code_hash.as_bytes()).unwrap())
@@ -337,10 +358,16 @@ fn cmd_spend(opts: &mut Opts) -> Result<(), String> {
         ));
     }
 
-    // 3. Build the output. Send (input_capacity - fee) to the --to recipient.
-    let output_capacity = input_capacity_shannons
-        .checked_sub(opts.fee)
-        .ok_or("fee exceeds input capacity")?;
+    // 3. Build the output(s).
+    //
+    // Without --to-capacity: single output sends (input_capacity - fee) to
+    // the recipient.
+    //
+    // With --to-capacity <CKB>: two outputs — recipient gets the specified
+    // amount, change (input - recipient - fee) goes back to the SOURCE v2
+    // lock so follow-up spends from the same address are possible without
+    // another faucet trip. Both outputs must individually meet the CKB min
+    // capacity rule (~78 CKB for a 37-byte-args cell).
     let to_args_bytes = parse_hex_arg(to_args, "--to")?;
     let recipient_lock = Script::new_builder()
         .code_hash(Byte32::from_slice(recipient_code_hash.as_bytes()).unwrap())
@@ -350,25 +377,64 @@ fn cmd_spend(opts: &mut Opts) -> Result<(), String> {
             b
         })
         .build();
-    let output_cell = CellOutput::new_builder()
-        .capacity(output_capacity)
-        .lock(recipient_lock)
-        .build();
 
-    eprintln!(
-        "\noutput: {} CKB ({} shannons) → recipient 0x{}",
-        output_capacity as f64 / 1e8,
-        output_capacity,
-        &to_args[..std::cmp::min(20, to_args.len())]
-    );
+    let (output_cells, outputs_data): (Vec<CellOutput>, Vec<ckb_types::bytes::Bytes>) =
+        if let Some(to_ckb) = opts.to_capacity_ckb {
+            let to_shannons = to_ckb
+                .checked_mul(100_000_000)
+                .ok_or("--to-capacity overflows u64")?;
+            let change_shannons = input_capacity_shannons
+                .checked_sub(to_shannons)
+                .and_then(|v| v.checked_sub(opts.fee))
+                .ok_or("input capacity < --to-capacity + fee")?;
+
+            let recipient_cell = CellOutput::new_builder()
+                .capacity(to_shannons)
+                .lock(recipient_lock)
+                .build();
+            let change_cell = CellOutput::new_builder()
+                .capacity(change_shannons)
+                .lock(v2_lock_script.clone())
+                .build();
+            eprintln!(
+                "\noutput[0]: {} CKB ({} shannons) → recipient 0x{}",
+                to_shannons as f64 / 1e8,
+                to_shannons,
+                &to_args[..std::cmp::min(20, to_args.len())]
+            );
+            eprintln!(
+                "output[1]: {} CKB ({} shannons) → CHANGE (same v2 lock)",
+                change_shannons as f64 / 1e8,
+                change_shannons
+            );
+            (
+                vec![recipient_cell, change_cell],
+                vec![Bytes::new(), Bytes::new()],
+            )
+        } else {
+            let output_capacity = input_capacity_shannons
+                .checked_sub(opts.fee)
+                .ok_or("fee exceeds input capacity")?;
+            let cell = CellOutput::new_builder()
+                .capacity(output_capacity)
+                .lock(recipient_lock)
+                .build();
+            eprintln!(
+                "\noutput: {} CKB ({} shannons) → recipient 0x{}",
+                output_capacity as f64 / 1e8,
+                output_capacity,
+                &to_args[..std::cmp::min(20, to_args.len())]
+            );
+            (vec![cell], vec![Bytes::new()])
+        };
     eprintln!("fee:    {} shannons", opts.fee);
 
-    // 4. Build the cell dep pointing at the v2 code cell.
+    // 4. Build the cell dep pointing at the variant's v2 code cell.
     let deploy_cell_dep = CellDep::new_builder()
         .out_point(
             OutPoint::new_builder()
                 .tx_hash(Byte32::from_slice(deploy_tx.as_bytes()).unwrap())
-                .index(opts.deploy_idx)
+                .index(deploy_idx)
                 .build(),
         )
         .dep_type(DepType::Code)
@@ -399,8 +465,8 @@ fn cmd_spend(opts: &mut Opts) -> Result<(), String> {
     let tx = TransactionBuilder::default()
         .cell_dep(deploy_cell_dep)
         .input(input)
-        .output(output_cell)
-        .output_data(Bytes::new().pack())
+        .outputs(output_cells)
+        .outputs_data(outputs_data.into_iter().map(|b| b.pack()).collect::<Vec<_>>())
         .witness(placeholder_witness.as_bytes().pack())
         .build();
 
@@ -411,8 +477,8 @@ fn cmd_spend(opts: &mut Opts) -> Result<(), String> {
         .map_err(|e| format!("generate_ckb_tx_message_all_host: {e:?}"))?;
     eprintln!("\nCighashAll stream: {} bytes", cighash_all_bytes.len());
 
-    // 7. Sign.
-    let real_witness_lock_bytes = sign(&seed, ParamId::Mldsa65, opts.index, &cighash_all_bytes)
+    // 7. Sign with the chosen variant.
+    let real_witness_lock_bytes = sign(&seed, param_id, opts.index, &cighash_all_bytes)
         .map_err(|e| format!("sign: {e}"))?;
     assert_eq!(real_witness_lock_bytes.len(), 1 + pk_len + sig_len);
     assert_eq!(
@@ -637,6 +703,36 @@ fn parse_h256(s: &str, field: &str) -> Result<H256, String> {
 fn parse_hex_arg(s: &str, field: &str) -> Result<Vec<u8>, String> {
     let s = s.trim_start_matches("0x");
     hex::decode(s).map_err(|e| format!("{field}: invalid hex: {e}"))
+}
+
+fn parse_param_id(s: &str) -> Result<ParamId, String> {
+    match s {
+        "44" => Ok(ParamId::Mldsa44),
+        "65" => Ok(ParamId::Mldsa65),
+        "87" => Ok(ParamId::Mldsa87),
+        other => Err(format!("--param-id must be 44, 65, or 87 (got {other})")),
+    }
+}
+
+fn resolve_code_hash(opts: &Opts, param_id: ParamId) -> String {
+    if let Some(explicit) = &opts.code_hash {
+        return explicit.clone();
+    }
+    match param_id {
+        ParamId::Mldsa44 => format!("{MLDSA44_LOCK_V2_CODE_HASH:#x}"),
+        ParamId::Mldsa65 => format!("{MLDSA65_LOCK_V2_CODE_HASH:#x}"),
+        ParamId::Mldsa87 => format!("{MLDSA87_LOCK_V2_CODE_HASH:#x}"),
+    }
+}
+
+/// Per-variant default deploy cell output index — matches the order the
+/// three cells appear in deploy tx 0xb1a05b5000...: 44 at 0, 65 at 1, 87 at 2.
+fn default_deploy_idx(param_id: ParamId) -> u32 {
+    match param_id {
+        ParamId::Mldsa44 => 0,
+        ParamId::Mldsa65 => 1,
+        ParamId::Mldsa87 => 2,
+    }
 }
 
 fn parse_hash_type(s: &str) -> Result<ScriptHashType, String> {
