@@ -1,0 +1,22 @@
+[build]
+target = "riscv64imac-unknown-none-elf"
+
+[target.riscv64imac-unknown-none-elf]
+rustflags = [
+    # B-extension subsets supported by CKB-VM (speed up crypto inner loops in
+    # ml-dsa verify): zba (address gen), zbb (basic bitmanip), zbc (carryless
+    # multiply), zbs (single-bit ops).
+    "-C", "target-feature=+zba,+zbb,+zbc,+zbs,-a",
+    # -a disables the A (Atomic) extension codegen. ckb-std 1.0's `dummy-atomic`
+    # feature would handle this at the source level, but disabling at codegen
+    # is belt-and-braces and matches XuJiandong's reference setup exactly.
+    "-C", "link-arg=-s",
+    "-C", "link-arg=--gc-sections",
+    "-C", "link-arg=-T",
+    "-C", "link-arg=ckb-contract.ld",
+]
+
+# No [unstable] build-std: stable toolchain uses the pre-built core/alloc
+# for riscv64imac-unknown-none-elf installed via rustup. The `dummy-atomic`
+# feature in ckb-std 1.0 provides the atomic-ops stubs the standard library
+# needs without rebuilding core.

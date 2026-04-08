@@ -1,0 +1,13 @@
+# Stable Rust with the riscv64imac-unknown-none-elf target pre-installed.
+#
+# Unlike the sibling `mldsa-lock-v2/` crate (which uses nightly-2025-01-01 +
+# build-std to control core/alloc codegen), this crate uses ckb-std 1.0's
+# `dummy-atomic` feature to handle the A-extension problem at the source
+# level. That removes the need for build-std, which in turn removes the need
+# for a nightly toolchain.
+#
+# Matches XuJiandong's reference: ckb-rust-algorithm-benchmarks#9.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+targets = ["riscv64imac-unknown-none-elf"]

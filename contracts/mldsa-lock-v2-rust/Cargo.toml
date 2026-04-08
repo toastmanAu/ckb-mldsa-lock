@@ -1,0 +1,89 @@
+[package]
+name = "mldsa-lock-v2-rust"
+version = "0.1.0"
+edition = "2021"
+description = "CKB ML-DSA (FIPS 204) lock script — v2 pure-Rust variant using RustCrypto ml-dsa crate"
+license = "MIT"
+repository = "https://github.com/toastmanAu/ckb-mldsa-lock"
+
+# Standalone crate — intentionally NOT a workspace member. Targets
+# riscv64imac-unknown-none-elf and uses ckb-std 1.0 (newer than the sibling
+# mldsa-lock-v2's pinned 0.17.1), so workspace unification would fight us.
+#
+# Design note: this crate is a SIBLING of mldsa-lock-v2, not a replacement.
+# The two binaries intentionally use different crypto backends:
+#
+#   mldsa-lock-v2       → fips204 crate (pure Rust, FIPS-204 reference impl)
+#   mldsa-lock-v2-rust  → RustCrypto ml-dsa crate (widely-reviewed)
+#
+# Their signatures are NOT cross-compatible — the ml-dsa crate applies the
+# FIPS-204 §5.4 M' framing internally via `verify_with_context`, while
+# mldsa-lock-v2 applies its own explicit wrapper via `build_fips204_final_message`
+# and passes an empty ctx to fips204's verify (which wraps again). Different
+# M' bytes → different signatures. Each lock is identified by a distinct
+# code_hash and consumers pick one.
+#
+# Motivation: XuJiandong's benchmark #9 showed RustCrypto ml-dsa at ~25% fewer
+# cycles than fips204 on CKB-VM. This crate exists to measure that delta on
+# our real lock-plumbing, not on a bare verify call. See
+# https://github.com/XuJiandong/ckb-rust-algorithm-benchmarks/pull/9
+[workspace]
+
+[[bin]]
+name = "mldsa44-lock-v2-rust"
+path = "bin/mldsa44.rs"
+
+[[bin]]
+name = "mldsa65-lock-v2-rust"
+path = "bin/mldsa65.rs"
+
+[[bin]]
+name = "mldsa87-lock-v2-rust"
+path = "bin/mldsa87.rs"
+
+[dependencies]
+# ckb-std 1.1 brings the `dummy-atomic` feature which replaces our manual
+# `-C target-feature=-a` rustflag. `allocator` provides the default allocator
+# for alloc::vec::Vec inside the contract.
+#
+# In ckb-std 1.x the ecosystem was split into standalone sibling crates
+# (ckb-types, ckb-hash, ckb-gen-types, ckb-rust-std) — ckb-std itself no
+# longer re-exports them. We depend on the ones we need directly.
+ckb-std = { version = "1.1.0", default-features = false, features = ["allocator", "dummy-atomic", "ckb-types"] }
+
+# ckb-rust-std: io::Write trait used by the streamer to hash directly into
+# blake2b without an intermediate buffer.
+ckb-rust-std = { version = "1.0.0", default-features = false }
+
+# ckb-hash: personalised blake2b. `ckb-contract` feature selects the pure-Rust
+# blake2b-ref backend that works in no_std / riscv targets.
+ckb-hash = { version = "1.1.0", default-features = false, features = ["ckb-contract"] }
+
+# ckb-gen-types: the generated molecule types (WitnessArgsReader etc.) for
+# parsing the first group-input witness. `default-features = false` drops the
+# `std` feature which would transitively pull in faster-hex and other
+# std-requiring crates that don't compile for riscv64imac-unknown-none-elf.
+ckb-gen-types = { version = "1.1.0", default-features = false }
+
+# molecule: the error type WitnessArgsReader returns. Pinned to 0.9 to match
+# the transitive version pulled by ckb-gen-types 1.1 — without this, Cargo
+# unifies to 0.8 (our direct spec) AND 0.9 (ckb-gen-types') and the streamer
+# sees TWO distinct VerificationError types that don't unify in ? operators.
+molecule = { version = "0.9", default-features = false }
+
+# RustCrypto ml-dsa — pinned to the exact git rev XuJiandong benchmarked in
+# ckb-rust-algorithm-benchmarks#9. Not a crates.io release; 0.1.0-rc.8 there
+# predates the VerifyingKey::verify_with_context API we use.
+ml-dsa = { git = "https://github.com/RustCrypto/signatures", rev = "66473ec", default-features = false }
+
+[profile.release]
+opt-level = 3        # match XuJiandong's ref — speed > size for PQ verify
+overflow-checks = true
+lto = true           # link-time optimisation across crates
+codegen-units = 1    # single CGU for best LTO
+panic = "abort"      # no unwind tables
+strip = true         # strip symbols
+
+[profile.dev]
+opt-level = 1
+panic = "abort"
