@@ -134,10 +134,20 @@ fn verify_mldsa_87(pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, Error> {
 }
 
 fn verify_generic<P: KeyGen>(pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, Error> {
+    // Verifying-key decode only validates length. Garbage bytes decode
+    // successfully into a VerifyingKey (which will then fail verify).
     let enc_vk = EncodedVerifyingKey::<P>::try_from(pk).map_err(|_| Error::InvalidPubkeyLength)?;
     let vk = VerifyingKey::<P>::decode(&enc_vk);
+
+    // Signature::try_from calls Signature::decode which rejects bytes that
+    // fail structural validation: Hint::bit_unpack or `z.infinity_norm >=
+    // GAMMA1_MINUS_BETA`. For our purposes ANY failure to decode a signature
+    // is "signature didn't verify" — the byte count was already validated
+    // by the `lock_bytes.len() != 1 + pk_len + sig_len` guard above, so this
+    // error map is NOT InvalidSignatureLength (that would be misleading).
     let signature =
-        Signature::<P>::try_from(sig).map_err(|_| Error::InvalidSignatureLength)?;
+        Signature::<P>::try_from(sig).map_err(|_| Error::SignatureVerifyFailed)?;
+
     Ok(vk.verify_with_context(msg, DOMAIN, &signature))
 }
 
