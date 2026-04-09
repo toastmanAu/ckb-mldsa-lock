@@ -61,20 +61,25 @@ use ckb_types::{
     H256,
 };
 
-// ── defaults baked in from the 2026-04-08 testnet deploy ────────────────────
+// ── defaults baked in from the 2026-04-09 testnet deploy ────────────────────
 
 const DEFAULT_RPC: &str = "https://testnet.ckb.dev";
 
-// This is the HASH of the type script `{code_hash: TYPE_ID_CODE_HASH,
-// hash_type: type, args: <discriminator>}` that lives on the deployed code
-// cell at deploy_tx:1. When consumer lock scripts use `hash_type: "type"`,
-// they must set `code_hash` to this value — NOT to the type script's args.
-// The on-chain `type.args` value `0xece0f0e37a3ae5029e3558102e59f34d1b47a5b2fa18c41b192cdd8d435915d7`
-// is the TYPE_ID discriminator, a completely different thing.
-// Per-variant code_hash (hash of the deployed cell's type script) and deploy
-// cell output index. Each is keyed on the ParamId variant ordering: 44, 65, 87.
-// Correct values from the 2026-04-08 testnet deploy
-// tx 0xb1a05b5000cecdcb51a1518e96cb13d81a1b28cea21d861a64081430cb35ae88.
+// All 8 lock cells now live in a single deploy tx as of session 9
+// (2026-04-09). The original session-4 / session-7 txs are still
+// referenced by any existing cells locked under those code_hashes,
+// but for new spends the type_id stays the same and the dep points
+// at the latest tx — ckb-cli's type_id upgrade flow updates migration
+// state atomically.
+const SESSION9_DEPLOY_TX: H256 =
+    h256!("0x39b1c11ed7ca2e4a0491c69d105ee07e5659e88109661d4b48f2ff39a45cf1f1");
+
+// These are SCRIPT HASHES (hash of the cell's type script), NOT the TYPE_ID
+// discriminator. Consumers set `code_hash` to these + `hash_type: type`.
+//
+// Because type_id preserves the script hash across upgrades, the 5 fips204
+// + falcon code_hashes are identical to the session-4 / session-7 values.
+// The 3 v2-rust code_hashes are new.
 const MLDSA44_LOCK_V2_CODE_HASH: H256 =
     h256!("0x1e9798b5545214d7c6bf9a23564847b671c40f3f91536608e7c2eadf782ba237");
 const MLDSA65_LOCK_V2_CODE_HASH: H256 =
@@ -82,22 +87,34 @@ const MLDSA65_LOCK_V2_CODE_HASH: H256 =
 const MLDSA87_LOCK_V2_CODE_HASH: H256 =
     h256!("0x37dc2a33c484de9b2378a07f926e78083e53a0322bc05e78681bb47510607e15");
 
-// Falcon variants deployed 2026-04-08 session 7 (tx 0x0e15396cff81e3... at
-// block 20,691,215). Same rule as the ML-DSA constants: these are SCRIPT
-// HASHES (from `gen-txs` pre-broadcast output), NOT the TYPE_ID
-// discriminators visible as `tx.outputs[i].type.args` post-broadcast.
 const FALCON512_LOCK_V2_CODE_HASH: H256 =
     h256!("0xbf949c7980454296ca2d537471fd86b746f5fa86df50533644d10c9b06a2fbd4");
 const FALCON1024_LOCK_V2_CODE_HASH: H256 =
     h256!("0xbf26aaceee7237aad36e984c04917dc0d94ee46d6a84965063509729716cfd10");
 
-/// The 2026-04-08 deploy tx that holds the v2 cells.
-const DEFAULT_DEPLOY_TX: H256 =
-    h256!("0xb1a05b5000cecdcb51a1518e96cb13d81a1b28cea21d861a64081430cb35ae88");
+// v2-rust (RustCrypto ml-dsa) — deployed session 9, fresh type_ids.
+const MLDSA44_LOCK_V2_RUST_CODE_HASH: H256 =
+    h256!("0x52acc41edd9218617e164555d99d2830292754c79370b61bee4e5f0e89d34756");
+const MLDSA65_LOCK_V2_RUST_CODE_HASH: H256 =
+    h256!("0xd70653f7fd51e173ec506b76081f37bf4acebb8a15dc79e6d4ad43ca4d3b78a4");
+const MLDSA87_LOCK_V2_RUST_CODE_HASH: H256 =
+    h256!("0x70021f94a11de672edd16bdb2f577cb2178cd8581080c951513e8650cfca033c");
 
-/// The Falcon deploy tx (session 7).
-const DEFAULT_FALCON_DEPLOY_TX: H256 =
-    h256!("0x0e15396cff81e32b8abbcb37f9cbdce87b7edc60fc4150220c081bf85822bbc0");
+/// Signer backend — picks which crate produces the signature. Also selects
+/// the default code_hash per variant because the two backends live under
+/// distinct deploys.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Backend {
+    /// fips204 crate + explicit M' wrapper (`build_fips204_final_message`)
+    /// — matches mldsa-lock-v2. Signatures produced here are valid for the
+    /// fips204 sibling and NOT for mldsa-lock-v2-rust. This is the default
+    /// to preserve back-compat with the session-4/7 addresses.
+    Fips204,
+    /// ml-dsa crate (RustCrypto) + internal M' framing via
+    /// `sign_deterministic(msg, ctx)` — matches mldsa-lock-v2-rust. Only
+    /// valid for ML-DSA ParamIds; Falcon variants ignore this flag.
+    MlDsa,
+}
 
 /// Default tx fee in shannons. 100_000 shannons = 0.001 CKB — generous
 /// headroom over the real cost of a single-input single-output v2 spend.
@@ -154,10 +171,16 @@ MODES:
 
 COMMON OPTIONS:
     --seed <hex>        32-byte hex seed (required)
-    --param-id <n>      44 | 65 | 87 — which ML-DSA variant (default 65)
+    --param-id <n>      44 | 65 | 87 | falcon512 | falcon1024 (default 65)
+    --backend <b>       fips204 | ml-dsa  (default: fips204)
+                        Selects which ML-DSA lock to target. Ignored for
+                        Falcon variants. fips204 → mldsa-lock-v2 (session-4
+                        code_hashes). ml-dsa → mldsa-lock-v2-rust (session-9,
+                        new code_hashes, ~45% fewer cycles).
     --index <n>         HKDF account index (default 0)
     --rpc <url>         CKB RPC endpoint (default https://testnet.ckb.dev)
-    --code-hash <hex>   v2 lock code_hash (default: baked in for --param-id)
+    --code-hash <hex>   v2 lock code_hash (default: baked in per
+                        (--param-id, --backend))
 
 SPEND-ONLY OPTIONS:
     --input-tx <hash>:<index>   v2-locked cell to spend (required)
@@ -177,6 +200,7 @@ struct Opts {
     index: u32,
     rpc: String,
     param_id: String,
+    backend: Option<String>,
     code_hash: Option<String>,
     deploy_tx: Option<String>,
     deploy_idx: Option<u32>,
@@ -228,6 +252,10 @@ fn parse_opts(args: &[String]) -> Opts {
                 o.code_hash = next();
                 i += 2;
             }
+            "--backend" => {
+                o.backend = next();
+                i += 2;
+            }
             "--deploy-tx" => {
                 o.deploy_tx = next();
                 i += 2;
@@ -274,7 +302,8 @@ fn parse_opts(args: &[String]) -> Opts {
 fn cmd_derive_address(opts: &mut Opts) -> Result<(), String> {
     let seed = require_seed(opts)?;
     let param_id = parse_param_id(&opts.param_id)?;
-    let code_hash_str = resolve_code_hash(opts, param_id);
+    let backend = parse_backend(opts)?;
+    let code_hash_str = resolve_code_hash(opts, param_id, backend);
     let code_hash = parse_h256(&code_hash_str, "--code-hash")?;
 
     let (_pk_bytes, lock_args) = if is_falcon(param_id) {
@@ -307,17 +336,17 @@ fn cmd_derive_address(opts: &mut Opts) -> Result<(), String> {
 fn cmd_spend(opts: &mut Opts) -> Result<(), String> {
     let seed = require_seed(opts)?;
     let param_id = parse_param_id(&opts.param_id)?;
-    let code_hash_str = resolve_code_hash(opts, param_id);
+    let backend = parse_backend(opts)?;
+    let code_hash_str = resolve_code_hash(opts, param_id, backend);
     let code_hash = parse_h256(&code_hash_str, "--code-hash")?;
-    // For Falcon variants, default the deploy tx to the Falcon deploy if
-    // the caller didn't override it. ML-DSA variants default to the
-    // session-4 ML-DSA deploy tx.
     let deploy_tx_str = opts
         .deploy_tx
         .clone()
-        .unwrap_or_else(|| format!("{:#x}", default_deploy_tx(param_id)));
+        .unwrap_or_else(|| format!("{:#x}", default_deploy_tx(param_id, backend)));
     let deploy_tx = parse_h256(&deploy_tx_str, "--deploy-tx")?;
-    let deploy_idx = opts.deploy_idx.unwrap_or_else(|| default_deploy_idx(param_id));
+    let deploy_idx = opts
+        .deploy_idx
+        .unwrap_or_else(|| default_deploy_idx(param_id, backend));
     let input_spec = opts
         .input_tx
         .as_ref()
@@ -505,14 +534,30 @@ fn cmd_spend(opts: &mut Opts) -> Result<(), String> {
         .map_err(|e| format!("generate_ckb_tx_message_all_host: {e:?}"))?;
     eprintln!("\nCighashAll stream: {} bytes", cighash_all_bytes.len());
 
-    // 7. Sign with the chosen variant — Falcon uses a separate signer
-    //    because it has a different message pipeline (no FIPS-204 M')
-    //    and needs hardware FP for keygen.
+    // 7. Sign with the chosen variant + backend.
+    //
+    // Three signing paths:
+    //   (a) Falcon                        → ckb_fips204_utils::falcon_signing
+    //   (b) ML-DSA + Backend::Fips204     → ckb_fips204_utils::signing
+    //                                       (double-wraps M' — historical,
+    //                                        locked in by the fips204 lock)
+    //   (c) ML-DSA + Backend::MlDsa       → RustCrypto ml-dsa crate via
+    //                                       `sign_deterministic(msg, DOMAIN)`
+    //                                       — single M' wrap, matches
+    //                                       mldsa-lock-v2-rust's on-chain
+    //                                       `verify_with_context` call
+    //
+    // Paths (b) and (c) produce DIFFERENT signatures from the same seed even
+    // though they derive the same pubkey (FIPS 204 KeyGen is deterministic
+    // from the HKDF'd 32-byte seed, so pk_bytes / lock_args are identical).
     let real_witness_lock_bytes = if is_falcon(param_id) {
         ckb_fips204_utils::falcon_signing::sign(&seed, param_id, opts.index, &cighash_all_bytes)
             .map_err(|e| format!("falcon sign: {e}"))?
-    } else {
+    } else if backend == Backend::Fips204 {
         ckb_fips204_utils::signing::sign(&seed, param_id, opts.index, &cighash_all_bytes)
+            .map_err(|e| format!("fips204 sign: {e}"))?
+    } else {
+        sign_mldsa_rust(&seed, param_id, opts.index, &cighash_all_bytes)
             .map_err(|e| format!("ml-dsa sign: {e}"))?
     };
     assert_eq!(real_witness_lock_bytes.len(), 1 + pk_len + sig_len);
@@ -753,40 +798,63 @@ fn parse_param_id(s: &str) -> Result<ParamId, String> {
     }
 }
 
-fn resolve_code_hash(opts: &Opts, param_id: ParamId) -> String {
+fn parse_backend(opts: &Opts) -> Result<Backend, String> {
+    match opts.backend.as_deref() {
+        None | Some("") | Some("fips204") | Some("fips") => Ok(Backend::Fips204),
+        Some("ml-dsa") | Some("mldsa") | Some("rustcrypto") | Some("rust") => Ok(Backend::MlDsa),
+        Some(other) => Err(format!(
+            "--backend must be fips204 or ml-dsa (got {other})"
+        )),
+    }
+}
+
+fn resolve_code_hash(opts: &Opts, param_id: ParamId, backend: Backend) -> String {
     if let Some(explicit) = &opts.code_hash {
         return explicit.clone();
     }
-    match param_id {
-        ParamId::Mldsa44 => format!("{MLDSA44_LOCK_V2_CODE_HASH:#x}"),
-        ParamId::Mldsa65 => format!("{MLDSA65_LOCK_V2_CODE_HASH:#x}"),
-        ParamId::Mldsa87 => format!("{MLDSA87_LOCK_V2_CODE_HASH:#x}"),
-        ParamId::Falcon512 => format!("{FALCON512_LOCK_V2_CODE_HASH:#x}"),
-        ParamId::Falcon1024 => format!("{FALCON1024_LOCK_V2_CODE_HASH:#x}"),
+    match (backend, param_id) {
+        (Backend::Fips204, ParamId::Mldsa44) => format!("{MLDSA44_LOCK_V2_CODE_HASH:#x}"),
+        (Backend::Fips204, ParamId::Mldsa65) => format!("{MLDSA65_LOCK_V2_CODE_HASH:#x}"),
+        (Backend::Fips204, ParamId::Mldsa87) => format!("{MLDSA87_LOCK_V2_CODE_HASH:#x}"),
+        (Backend::MlDsa, ParamId::Mldsa44) => format!("{MLDSA44_LOCK_V2_RUST_CODE_HASH:#x}"),
+        (Backend::MlDsa, ParamId::Mldsa65) => format!("{MLDSA65_LOCK_V2_RUST_CODE_HASH:#x}"),
+        (Backend::MlDsa, ParamId::Mldsa87) => format!("{MLDSA87_LOCK_V2_RUST_CODE_HASH:#x}"),
+        // Falcon is backend-agnostic — there's only one falcon lock variant
+        // per parameter set, regardless of the ML-DSA backend flag.
+        (_, ParamId::Falcon512) => format!("{FALCON512_LOCK_V2_CODE_HASH:#x}"),
+        (_, ParamId::Falcon1024) => format!("{FALCON1024_LOCK_V2_CODE_HASH:#x}"),
     }
 }
 
-/// Per-variant default deploy cell output index + deploy tx.
+/// Per-variant default deploy cell output index. As of session 9 all 8 cells
+/// live in one tx with this layout:
 ///
-/// ML-DSA variants are in tx b1a05b50 (session 4): 44@0, 65@1, 87@2.
-/// Falcon variants are in tx 0e15396c (session 7): 512@0, 1024@1.
-fn default_deploy_idx(param_id: ParamId) -> u32 {
-    match param_id {
-        ParamId::Mldsa44 => 0,
-        ParamId::Mldsa65 => 1,
-        ParamId::Mldsa87 => 2,
-        ParamId::Falcon512 => 0,
-        ParamId::Falcon1024 => 1,
+///   0: mldsa44-lock-v2    (fips204)
+///   1: mldsa65-lock-v2    (fips204)
+///   2: mldsa87-lock-v2    (fips204)
+///   3: falcon512-lock-v2
+///   4: falcon1024-lock-v2
+///   5: mldsa44-lock-v2-rust
+///   6: mldsa65-lock-v2-rust
+///   7: mldsa87-lock-v2-rust
+fn default_deploy_idx(param_id: ParamId, backend: Backend) -> u32 {
+    match (backend, param_id) {
+        (Backend::Fips204, ParamId::Mldsa44) => 0,
+        (Backend::Fips204, ParamId::Mldsa65) => 1,
+        (Backend::Fips204, ParamId::Mldsa87) => 2,
+        (_, ParamId::Falcon512) => 3,
+        (_, ParamId::Falcon1024) => 4,
+        (Backend::MlDsa, ParamId::Mldsa44) => 5,
+        (Backend::MlDsa, ParamId::Mldsa65) => 6,
+        (Backend::MlDsa, ParamId::Mldsa87) => 7,
     }
 }
 
-/// Per-variant default deploy tx hash. Falcon variants live in a different
-/// deploy tx than the ML-DSA variants.
-fn default_deploy_tx(param_id: ParamId) -> H256 {
-    match param_id {
-        ParamId::Mldsa44 | ParamId::Mldsa65 | ParamId::Mldsa87 => DEFAULT_DEPLOY_TX,
-        ParamId::Falcon512 | ParamId::Falcon1024 => DEFAULT_FALCON_DEPLOY_TX,
-    }
+/// Per-variant default deploy tx hash. As of session 9 all cells live in one
+/// tx; the `_param_id` / `_backend` args are kept for interface symmetry and
+/// future forks.
+fn default_deploy_tx(_param_id: ParamId, _backend: Backend) -> H256 {
+    SESSION9_DEPLOY_TX
 }
 
 fn parse_hash_type(s: &str) -> Result<ScriptHashType, String> {
@@ -797,4 +865,137 @@ fn parse_hash_type(s: &str) -> Result<ScriptHashType, String> {
         "data2" => Ok(ScriptHashType::Data2),
         other => Err(format!("unknown hash type: {other}")),
     }
+}
+
+// ── ml-dsa crate signing path ───────────────────────────────────────────────
+//
+// This replicates ckb_fips204_utils::signing::sign but routes the signature
+// through the RustCrypto `ml-dsa` crate instead of `fips204`. The two crates
+// are byte-compatible at the FIPS-204 KeyGen level (deterministic from a 32-
+// byte seed) so the derived pk / lock_args match — but they frame M' differently:
+//
+//   fips204 path (matches mldsa-lock-v2):
+//     explicit build_fips204_final_message wrapper, then
+//     fips204::sign(final_msg, ctx=empty)
+//                                          ↳ wraps AGAIN → double-framed M'
+//
+//   ml-dsa path (matches mldsa-lock-v2-rust):
+//     sk.sign_deterministic(digest_32, ctx=DOMAIN)
+//                                          ↳ wraps once → single-framed M'
+//
+// The on-chain mldsa-lock-v2-rust contract calls
+// `vk.verify_with_context(digest, DOMAIN, sig)` which applies the single M'
+// framing; this path must mirror that exactly.
+
+fn kdf_variant_suffix_local(param_id: ParamId) -> &'static str {
+    // Must match `ckb_fips204_utils::kdf_variant_suffix` so the HKDF output
+    // is byte-identical across the two backends — that's what keeps the
+    // derived pk (and therefore lock_args) stable regardless of which
+    // crate ends up signing.
+    ckb_fips204_utils::kdf_variant_suffix(param_id)
+}
+
+fn derive_mldsa_seed(
+    master_seed: &[u8],
+    param_id: ParamId,
+    index: u32,
+) -> Result<[u8; 32], String> {
+    use hkdf::Hkdf;
+    use sha2::Sha256;
+    let info = format!(
+        "{}{}{}",
+        ckb_fips204_utils::KDF_PATH_PREFIX_MLDSA,
+        kdf_variant_suffix_local(param_id),
+        index
+    );
+    let hk = Hkdf::<Sha256>::new(None, master_seed);
+    let mut seed = [0u8; 32];
+    hk.expand(info.as_bytes(), &mut seed)
+        .map_err(|e| format!("HKDF expand error: {e:?}"))?;
+    Ok(seed)
+}
+
+const MLDSA_LOCK_DOMAIN: &[u8] = b"CKB-MLDSA-LOCK";
+
+fn sign_mldsa_rust(
+    master_seed: &[u8],
+    param_id: ParamId,
+    index: u32,
+    ckb_tx_message_all_bytes: &[u8],
+) -> Result<Vec<u8>, String> {
+    use ml_dsa::signature::Keypair;
+    use ml_dsa::{B32, EncodedSignature, KeyGen, MlDsa44, MlDsa65, MlDsa87};
+
+    // 1. Derive the 32-byte FIPS-204 KeyGen seed via the same HKDF path
+    //    the fips204 signer uses.
+    let seed_bytes = derive_mldsa_seed(master_seed, param_id, index)?;
+    let b32_seed = B32::from(seed_bytes);
+
+    // 2. Hash the CighashAll bytes through the personalised
+    //    `ckb-mldsa-msg` blake2b — matches the on-chain
+    //    `Hasher::message_hasher` in mldsa-lock-v2-rust.
+    let mut mh = ckb_fips204_utils::Hasher::message_hasher();
+    mh.update(ckb_tx_message_all_bytes);
+    let digest: [u8; 32] = mh.hash();
+
+    // 3. Keygen + deterministic sign with ctx=DOMAIN. Two values drop out:
+    //    the encoded pubkey (for the witness splice) and the signature.
+    let (pk_bytes, sig_bytes) = match param_id {
+        ParamId::Mldsa44 => {
+            let sk = <MlDsa44 as KeyGen>::from_seed(&b32_seed);
+            let vk = sk.verifying_key();
+            let pk = vk.encode().to_vec();
+            let sig = sk
+                .signing_key()
+                .sign_deterministic(&digest, MLDSA_LOCK_DOMAIN)
+                .map_err(|e| format!("mldsa44 sign_deterministic: {e}"))?;
+            let sig_arr: EncodedSignature<MlDsa44> = sig.encode();
+            (pk, sig_arr.to_vec())
+        }
+        ParamId::Mldsa65 => {
+            let sk = <MlDsa65 as KeyGen>::from_seed(&b32_seed);
+            let vk = sk.verifying_key();
+            let pk = vk.encode().to_vec();
+            let sig = sk
+                .signing_key()
+                .sign_deterministic(&digest, MLDSA_LOCK_DOMAIN)
+                .map_err(|e| format!("mldsa65 sign_deterministic: {e}"))?;
+            let sig_arr: EncodedSignature<MlDsa65> = sig.encode();
+            (pk, sig_arr.to_vec())
+        }
+        ParamId::Mldsa87 => {
+            let sk = <MlDsa87 as KeyGen>::from_seed(&b32_seed);
+            let vk = sk.verifying_key();
+            let pk = vk.encode().to_vec();
+            let sig = sk
+                .signing_key()
+                .sign_deterministic(&digest, MLDSA_LOCK_DOMAIN)
+                .map_err(|e| format!("mldsa87 sign_deterministic: {e}"))?;
+            let sig_arr: EncodedSignature<MlDsa87> = sig.encode();
+            (pk, sig_arr.to_vec())
+        }
+        ParamId::Falcon512 | ParamId::Falcon1024 => {
+            return Err("sign_mldsa_rust only supports ML-DSA ParamIds".into());
+        }
+    };
+
+    // 4. Length-check against FIPS 204 Table 1.
+    let (pk_len, sig_len, _) = lengths(param_id);
+    if pk_bytes.len() != pk_len {
+        return Err(format!("pk length mismatch: {}/{pk_len}", pk_bytes.len()));
+    }
+    if sig_bytes.len() != sig_len {
+        return Err(format!(
+            "sig length mismatch: {}/{sig_len}",
+            sig_bytes.len()
+        ));
+    }
+
+    // 5. Assemble [flag | pk | sig] — identical layout to the fips204 path.
+    let flag = ckb_fips204_utils::construct_flag(param_id, true);
+    let mut lock_bytes = Vec::with_capacity(1 + pk_len + sig_len);
+    lock_bytes.push(flag);
+    lock_bytes.extend_from_slice(&pk_bytes);
+    lock_bytes.extend_from_slice(&sig_bytes);
+    Ok(lock_bytes)
 }
