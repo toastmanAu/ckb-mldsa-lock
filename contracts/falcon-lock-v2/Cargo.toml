@@ -27,9 +27,14 @@ ckb-std = "0.17.1"
 ckb-fips204-utils = { path = "../../../code/key-vault-wasm/crates/ckb-fips204-utils", default-features = false, features = ["verifying", "falcon", "ckb-vm"] }
 
 [profile.release]
-opt-level = "z"      # smallest binary
-lto = true           # link-time optimisation across crates
+opt-level = 3        # max speed (was "z" smallest, but binary was
+                     # already page-quantised with 3 KB headroom so we
+                     # can spend it on more inlining)
+lto = "fat"          # fat LTO across all deps
 codegen-units = 1    # single CGU for best LTO
 panic = "abort"      # no unwind tables
 strip = true         # strip symbols
-overflow-checks = true
+overflow-checks = false  # fn-dsa-vrfy's NTT has many multiplications; runtime
+                         # bounds checks bloat .text and slow verify. The crate
+                         # does its own modular reductions, so they add nothing.
+                         # Mirror of the change applied to mldsa-lock-v2-rust.

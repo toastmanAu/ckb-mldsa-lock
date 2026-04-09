@@ -29,17 +29,41 @@ repository = "https://github.com/toastmanAu/ckb-mldsa-lock"
 # https://github.com/XuJiandong/ckb-rust-algorithm-benchmarks/pull/9
 [workspace]
 
+# Per-variant features. Each bin sets `required-features` for its own variant
+# so that building with e.g. `--features variant-65` compiles ONLY the mldsa65
+# binary and the `MlDsa65` monomorphisation of `verify_generic`. The other two
+# variant types (`MlDsa44`, `MlDsa87`) are `#[cfg]`-gated out of `entry.rs`
+# entirely — LTO alone only strips ~4 KB per unused variant because the
+# ml-dsa crate's shared verify machinery is reachable from all three
+# monomorphisations. Compile-time gating drops them completely.
+#
+# Build each bin with a separate cargo invocation (see scripts/build-all.sh).
+# Do NOT enable multiple variant features in the same build — that defeats
+# the gating and produces the larger "all-variants" binary.
+[features]
+# Default enables mldsa65 only, so `cargo check` / `cargo build` without
+# flags produces a valid single-variant build. Release builds use
+# scripts/build-all.sh which passes `--no-default-features --features variant-XX`
+# per bin.
+default = ["variant-65"]
+variant-44 = []
+variant-65 = []
+variant-87 = []
+
 [[bin]]
 name = "mldsa44-lock-v2-rust"
 path = "bin/mldsa44.rs"
+required-features = ["variant-44"]
 
 [[bin]]
 name = "mldsa65-lock-v2-rust"
 path = "bin/mldsa65.rs"
+required-features = ["variant-65"]
 
 [[bin]]
 name = "mldsa87-lock-v2-rust"
 path = "bin/mldsa87.rs"
+required-features = ["variant-87"]
 
 [dependencies]
 # ckb-std 1.1 brings the `dummy-atomic` feature which replaces our manual
@@ -78,8 +102,11 @@ ml-dsa = { git = "https://github.com/RustCrypto/signatures", rev = "66473ec", de
 
 [profile.release]
 opt-level = 3        # match XuJiandong's ref — speed > size for PQ verify
-overflow-checks = true
-lto = true           # link-time optimisation across crates
+overflow-checks = false  # ML-DSA core has thousands of NTT mults; bounds-check
+                         # bloat dwarfs any safety benefit and the crate does
+                         # its own explicit modular reductions. Reduces .text
+                         # from 70 KB → (measure below).
+lto = "fat"          # fat LTO across all deps (was `true` = thin)
 codegen-units = 1    # single CGU for best LTO
 panic = "abort"      # no unwind tables
 strip = true         # strip symbols

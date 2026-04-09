@@ -21,7 +21,14 @@ use alloc::vec::Vec;
 use ckb_std::ckb_constants::Source;
 use ckb_std::high_level::{load_script, load_witness_args};
 
-use ml_dsa::{EncodedVerifyingKey, KeyGen, MlDsa44, MlDsa65, MlDsa87, Signature, VerifyingKey};
+use ml_dsa::{EncodedVerifyingKey, KeyGen, Signature, VerifyingKey};
+
+#[cfg(feature = "variant-44")]
+use ml_dsa::MlDsa44;
+#[cfg(feature = "variant-65")]
+use ml_dsa::MlDsa65;
+#[cfg(feature = "variant-87")]
+use ml_dsa::MlDsa87;
 
 use crate::helpers::{destruct_flag, lengths, Error, Hasher, ParamId, DOMAIN};
 use crate::streamer::generate_ckb_tx_message_all;
@@ -106,10 +113,28 @@ fn run_inner(expected_param_id: ParamId) -> Result<(), Error> {
 
     // 6. Verify via ml-dsa — the crate applies FIPS-204 §5.4 M' framing
     //    internally using `ctx = DOMAIN`. No pre-wrapping on our side.
+    //
+    // Each arm is `#[cfg]`-gated so that a single-variant build only
+    // compiles one `MlDsa*` monomorphisation of `verify_generic`. The
+    // arms for non-enabled variants return `InvalidParamId` — in practice
+    // unreachable because the bin hardcodes its own `expected_param_id`
+    // to the enabled variant, but kept exhaustive so the match compiles
+    // with no wildcard.
     let verified = match expected_param_id {
+        #[cfg(feature = "variant-44")]
         ParamId::Mldsa44 => verify_mldsa_44(pk, &digest, sig)?,
+        #[cfg(not(feature = "variant-44"))]
+        ParamId::Mldsa44 => return Err(Error::InvalidParamId),
+
+        #[cfg(feature = "variant-65")]
         ParamId::Mldsa65 => verify_mldsa_65(pk, &digest, sig)?,
+        #[cfg(not(feature = "variant-65"))]
+        ParamId::Mldsa65 => return Err(Error::InvalidParamId),
+
+        #[cfg(feature = "variant-87")]
         ParamId::Mldsa87 => verify_mldsa_87(pk, &digest, sig)?,
+        #[cfg(not(feature = "variant-87"))]
+        ParamId::Mldsa87 => return Err(Error::InvalidParamId),
     };
 
     if !verified {
@@ -121,14 +146,17 @@ fn run_inner(expected_param_id: ParamId) -> Result<(), Error> {
 
 // ── per-variant verify shims ─────────────────────────────────────────────────
 
+#[cfg(feature = "variant-44")]
 fn verify_mldsa_44(pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, Error> {
     verify_generic::<MlDsa44>(pk, msg, sig)
 }
 
+#[cfg(feature = "variant-65")]
 fn verify_mldsa_65(pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, Error> {
     verify_generic::<MlDsa65>(pk, msg, sig)
 }
 
+#[cfg(feature = "variant-87")]
 fn verify_mldsa_87(pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, Error> {
     verify_generic::<MlDsa87>(pk, msg, sig)
 }
