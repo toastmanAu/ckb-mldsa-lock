@@ -1,12 +1,19 @@
 # CKB deploy config for the ckb-mldsa-lock project.
 #
 # Deployed so far (session 4, 2026-04-08):
-#   - mldsa44-lock-v2, mldsa65-lock-v2, mldsa87-lock-v2
+#   - mldsa{44,65,87}-lock-v2 (fips204 backend)
 #     in tx 0xb1a05b5000cecdcb51a1518e96cb13d81a1b28cea21d861a64081430cb35ae88
+#   - falcon{512,1024}-lock-v2 (original slow build)
+#     in tx 0x0e15396cff81e32b8abbcb37f9cbdce87b7edc60fc4150220c081bf85822bbc0
 #
-# Pending (this deploy, session 7):
-#   - falcon512-lock-v2, falcon1024-lock-v2
-#     from contracts/falcon-lock-v2/
+# This deploy (session 9, 2026-04-09):
+#   - NEW: mldsa{44,65,87}-lock-v2-rust (RustCrypto ml-dsa backend,
+#     45% fewer cycles than the fips204 variant at mldsa65). Fresh
+#     deploys, distinct code_hashes from the fips204 sibling per the
+#     "separate deployment" design decision.
+#   - UPGRADE: falcon{512,1024}-lock-v2 rebuilt with overflow-checks=off
+#     + opt-level=3 + fat-lto. 44% / 35% fewer cycles, SAME code_hash
+#     because ckb-cli type_id upgrade preserves the script hash.
 #
 # NOTE: the v1 C `mldsa-lock` cell stays deployed on testnet at its
 # original tx_hash 0xba4a6560... under an account whose password was lost.
@@ -38,6 +45,27 @@ location = { file = "contracts/falcon-lock-v2/target/riscv64imac-unknown-none-el
 name = "falcon1024-lock-v2"
 enable_type_id = true
 location = { file = "contracts/falcon-lock-v2/target/riscv64imac-unknown-none-elf/release/falcon1024-lock-v2" }
+
+# ── v2-rust (RustCrypto ml-dsa) — fresh deploys, new code_hashes ─────────
+#
+# Each bin is built with a separate cargo invocation gating on its
+# `variant-XX` feature so LTO + cfg together strip the unused variants.
+# See contracts/mldsa-lock-v2-rust/Cargo.toml for the build recipe.
+
+[[cells]]
+name = "mldsa44-lock-v2-rust"
+enable_type_id = true
+location = { file = "contracts/mldsa-lock-v2-rust/target/riscv64imac-unknown-none-elf/release/mldsa44-lock-v2-rust" }
+
+[[cells]]
+name = "mldsa65-lock-v2-rust"
+enable_type_id = true
+location = { file = "contracts/mldsa-lock-v2-rust/target/riscv64imac-unknown-none-elf/release/mldsa65-lock-v2-rust" }
+
+[[cells]]
+name = "mldsa87-lock-v2-rust"
+enable_type_id = true
+location = { file = "contracts/mldsa-lock-v2-rust/target/riscv64imac-unknown-none-elf/release/mldsa87-lock-v2-rust" }
 
 [lock]
 # Same deploy owner as the ML-DSA deploy. Migration state in

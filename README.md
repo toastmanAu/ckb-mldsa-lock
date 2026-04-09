@@ -1,14 +1,21 @@
 # ckb-mldsa-lock — Post-Quantum Lock Scripts for CKB
 
-Five post-quantum signature lock scripts for [CKB (Nervos Network)](https://nervos.org), all deployed and smoke-tested on testnet.
+**Eight** post-quantum signature lock scripts for [CKB (Nervos Network)](https://nervos.org), all deployed and smoke-tested on testnet. Two backend implementations exist for ML-DSA (fips204 vs RustCrypto ml-dsa) as distinct deploys with distinct `code_hash`es.
 
-| Family | Variant | NIST level | Witness lock | CKB-VM cycles | Live on testnet |
-|---|---|---|---|---|---|
-| **ML-DSA** (FIPS 204) | mldsa44 | 2 | 3,733 B | (unmeasured) | ✅ |
-| | mldsa65 | 3 | 5,262 B | 9.8M | ✅ |
-| | mldsa87 | 5 | 7,220 B | (unmeasured) | ✅ |
-| **Falcon / FN-DSA** (FIPS 206 draft) | falcon512 | 1 | **1,564 B** | **1.97M** | ✅ |
-| | falcon1024 | 5 | 3,074 B | 3.01M | ✅ |
+| Family | Backend | Variant | NIST | Witness lock | CKB-VM cycles | Testnet |
+|---|---|---|---|---:|---:|:---:|
+| **ML-DSA** (FIPS 204) | [fips204](https://crates.io/crates/fips204) | mldsa44-lock-v2 | 2 | 3,733 B | ~8M† | ✅ |
+| | | mldsa65-lock-v2 | 3 | 5,262 B | 10.2M | ✅ |
+| | | mldsa87-lock-v2 | 5 | 7,220 B | ~12M† | ✅ |
+| **ML-DSA** (FIPS 204) | [RustCrypto ml-dsa](https://github.com/RustCrypto/signatures/tree/master/ml-dsa) | mldsa44-lock-v2-rust | 2 | 3,733 B | **3.63M** | ✅ |
+| | | mldsa65-lock-v2-rust | 3 | 5,262 B | **5.56M** | ✅ |
+| | | mldsa87-lock-v2-rust | 5 | 7,220 B | **8.76M** | ✅ |
+| **Falcon / FN-DSA** (FIPS 206 draft) | [fn-dsa-vrfy](https://crates.io/crates/fn-dsa-vrfy) | falcon512-lock-v2 | 1 | **1,564 B** | **1.09M** | ✅ |
+| | | falcon1024-lock-v2 | 5 | 3,074 B | **1.97M** | ✅ |
+
+†fips204 mldsa44/87 cycle numbers are estimates — the sibling fips204 variants weren't re-benchmarked in the session-9 optimisation pass. The ml-dsa backend is strictly faster so new consumers should prefer the `-rust` code_hashes.
+
+All cycle numbers are from `ckb-testtool`/`ckb-debugger` on signed round-trip transactions (i.e. full CighashAll stream + single-input single-output verify), not from isolated-verify benchmarks. See `docs/benchmark-report.md` for methodology.
 
 > **Testnet only.** Not audited. Do not use for real funds. The Falcon variants depend on the FIPS 206 *draft* — wire format may change before standardisation.
 
@@ -18,12 +25,13 @@ Five post-quantum signature lock scripts for [CKB (Nervos Network)](https://nerv
 
 [CKB's lock-script model](https://docs.nervos.org/docs/script/script-template/) lets the security logic of every cell be replaced without a hard fork. That makes it one of the few production blockchains where you can deploy a post-quantum lock today, point new wallets at it, and migrate funds to PQ-locked cells at your own pace — no consensus changes required.
 
-This repo provides two sibling lock script families covering all the post-quantum signature schemes NIST standardised in the 2024 PQC round:
+This repo provides three sibling lock script families covering all the post-quantum signature schemes NIST standardised in the 2024 PQC round, with two implementations of ML-DSA so consumers can audit/compare crypto backends:
 
-- **`mldsa-lock-v2`** — three binaries for the three ML-DSA parameter sets (44/65/87, FIPS 204)
-- **`falcon-lock-v2`** — two binaries for the two Falcon parameter sets (512/1024, FIPS 206 draft)
+- **`mldsa-lock-v2`** — three binaries for ML-DSA-{44,65,87} using the `fips204` crate (FIPS 204 reference implementation by `integritychain`)
+- **`mldsa-lock-v2-rust`** — three binaries for the same three variants using RustCrypto's `ml-dsa` crate. ~40–45% fewer cycles than the `fips204` sibling on CKB-VM, at the cost of a slightly larger binary. Sibling deploy, not a replacement — integrators pick by `code_hash`.
+- **`falcon-lock-v2`** — two binaries for Falcon-{512,1024} using Thomas Pornin's `fn-dsa-vrfy` crate (Pornin is the Falcon designer; it's the only pure-Rust `no_std` Falcon verifier we could find)
 
-Both families share a single supporting Rust crate (`ckb-fips204-utils` in [quantumpurse/key-vault-wasm](https://github.com/QuantumPurse/key-vault-wasm), branch `feat/mldsa65-cighash`) which provides the CighashAll streamer, message wrapping, key derivation, and a host-side signer for wallets. Verification is structurally identical across all five variants — only the verify-arm differs.
+All three families share a single supporting Rust crate (`ckb-fips204-utils` in [quantumpurse/key-vault-wasm](https://github.com/QuantumPurse/key-vault-wasm), branch `feat/mldsa65-cighash`) which provides the CighashAll streamer, message wrapping, key derivation, and a host-side signer for wallets. The two ML-DSA backends share witness format + lock-args format exactly — they differ only in which crate verifies the signature on-chain and, consequently, in the FIPS-204 §5.4 `M'` framing they emit. Signatures are NOT cross-compatible between the `fips204` and `ml-dsa` variants even though the pubkey bytes are (FIPS 204 KeyGen is deterministic from a 32-byte seed, so both crates produce the same pk — the derived `lock_args` are identical).
 
 There's also a deprecated v1 C lock (`contracts/mldsa-lock/`) that was the original ML-DSA-65 deployment. It stays on testnet for historical compatibility but has a documented witness-coverage gap (HIGH-1) and is superseded by the v2 Rust binaries.
 
@@ -37,9 +45,12 @@ There's also a deprecated v1 C lock (`contracts/mldsa-lock/`) that was the origi
 
 | Variant | code_hash |
 |---|---|
-| mldsa44-lock-v2 | `0x1e9798b5545214d7c6bf9a23564847b671c40f3f91536608e7c2eadf782ba237` |
-| mldsa65-lock-v2 | `0xda3e5dc140c25b62ba0697fa83dc866e6c8e29eba4d9d91df5735bf4f06960a7` |
-| mldsa87-lock-v2 | `0x37dc2a33c484de9b2378a07f926e78083e53a0322bc05e78681bb47510607e15` |
+| mldsa44-lock-v2 (fips204) | `0x1e9798b5545214d7c6bf9a23564847b671c40f3f91536608e7c2eadf782ba237` |
+| mldsa65-lock-v2 (fips204) | `0xda3e5dc140c25b62ba0697fa83dc866e6c8e29eba4d9d91df5735bf4f06960a7` |
+| mldsa87-lock-v2 (fips204) | `0x37dc2a33c484de9b2378a07f926e78083e53a0322bc05e78681bb47510607e15` |
+| **mldsa44-lock-v2-rust** (ml-dsa) | `0x52acc41edd9218617e164555d99d2830292754c79370b61bee4e5f0e89d34756` |
+| **mldsa65-lock-v2-rust** (ml-dsa) | `0xd70653f7fd51e173ec506b76081f37bf4acebb8a15dc79e6d4ad43ca4d3b78a4` |
+| **mldsa87-lock-v2-rust** (ml-dsa) | `0x70021f94a11de672edd16bdb2f577cb2178cd8581080c951513e8650cfca033c` |
 | falcon512-lock-v2 | `0xbf949c7980454296ca2d537471fd86b746f5fa86df50533644d10c9b06a2fbd4` |
 | falcon1024-lock-v2 | `0xbf26aaceee7237aad36e984c04917dc0d94ee46d6a84965063509729716cfd10` |
 
@@ -47,24 +58,37 @@ There's also a deprecated v1 C lock (`contracts/mldsa-lock/`) that was the origi
 
 ### Deploy transactions
 
-| Family | Deploy tx | Block | Cell deps |
-|---|---|---|---|
-| ML-DSA (3 variants) | `0xb1a05b5000cecdcb51a1518e96cb13d81a1b28cea21d861a64081430cb35ae88` | 20,690,678 | mldsa44 @ output 0, mldsa65 @ output 1, mldsa87 @ output 2 |
-| Falcon (2 variants) | `0x0e15396cff81e32b8abbcb37f9cbdce87b7edc60fc4150220c081bf85822bbc0` | 20,691,215 | falcon512 @ output 0, falcon1024 @ output 1 |
+As of session 9 (2026-04-09), all 8 cells live in a single deploy tx. Previous-session tx hashes (session 4, session 7) remain valid references — consumers using those `cell_dep`s automatically get the new binaries via ckb-cli's type_id upgrade flow. The `code_hash`es for the 5 pre-session-9 variants are stable across the upgrade.
+
+| Deploy tx | Block | Cell deps |
+|---|---|---|
+| `0x39b1c11ed7ca2e4a0491c69d105ee07e5659e88109661d4b48f2ff39a45cf1f1` (session 9) | — | mldsa44-lock-v2 @ 0, mldsa65-lock-v2 @ 1, mldsa87-lock-v2 @ 2, falcon512-lock-v2 @ 3, falcon1024-lock-v2 @ 4, **mldsa44-lock-v2-rust @ 5, mldsa65-lock-v2-rust @ 6, mldsa87-lock-v2-rust @ 7** |
+| `0xb1a05b5000cecdcb51a1518e96cb13d81a1b28cea21d861a64081430cb35ae88` (session 4, fips204 only) | 20,690,678 | mldsa44/65/87 @ 0/1/2 |
+| `0x0e15396cff81e32b8abbcb37f9cbdce87b7edc60fc4150220c081bf85822bbc0` (session 7, original falcon) | 20,691,215 | falcon512/1024 @ 0/1 |
 
 When building a transaction that spends a v2-locked cell, add the relevant deploy tx output as a `cell_dep` with `dep_type: code`.
 
-### First on-chain spends (proof of life)
+### On-chain spends (proof of life)
 
-Each variant has been signed off-chain and verified by a real testnet miner:
+Each variant has been signed off-chain and verified by a real testnet miner. The session-9 spends (listed first) were all produced in a single daisy-chained sweep — each tx spends a cell locked under one variant and creates a cell locked under the next, proving that: (a) the ml-dsa backend signatures validate on-chain, (b) the upgraded falcon binaries accept spends under the same code_hash, and (c) the witness/args format is stable across all 5 variants.
+
+| Variant | Session-9 spend tx | Block |
+|---|---|---|
+| **mldsa44-lock-v2-rust** | `0x46fd79bca33ea1760ac2ec2a42648c3ed606eb13eec9b3100b423869827d38f4` | 20,711,308 |
+| **mldsa65-lock-v2-rust** | `0x12170078a25a20fb816b94512d6f3527aa4d9e0579bd2cef7dea2b6aef6ed3e6` | 20,711,313 |
+| **mldsa87-lock-v2-rust** | `0xa8df06e16b6802210f8d07a0f4a23da771037931b55c1ded616671ecd97a638d` | 20,711,318 |
+| **falcon512-lock-v2** (upgraded binary) | `0x94c2c05b8b5034f0dd79f2fbe81f5b01499411a6890d678f8b962375d034c2c5` | 20,711,322 |
+| **falcon1024-lock-v2** (upgraded binary) | `0x7b88abf9a3185435967132af1fb4d4cf269be660a20a86b168da365520a569c1` | 20,711,327 |
+
+Earlier session-4 / session-7 proof-of-life spends (original slower binaries, same code_hashes):
 
 | Variant | Spend tx | Block |
 |---|---|---|
-| mldsa44 | `0x4c9d90cb8bc735d6ad67d151fb6c2d28397272a7fcf06e89c06a726ff32c40dc` | 20,690,752 |
-| mldsa65 | `0x13dd23f46a029006a74877f55b51c6082a552b9c9cfb7ceec906f9f3cd6d7176` | 20,690,623 |
-| mldsa87 | `0x62be8df0e64569d28c6575a3e92950ed4a62f53c1beffcc71d4ce53107509970` | 20,690,772 |
-| falcon512 | `0x94c202157b8e8cf214b05005bf198d3f2267355861c080f0d35d9e44eb841079` | 20,691,270 |
-| falcon1024 | `0x4713bf6e88d51a297943a98be575936e25d5487aa97d964b22eef3a4dd1313b1` | 20,691,281 |
+| mldsa44-lock-v2 (fips204) | `0x4c9d90cb8bc735d6ad67d151fb6c2d28397272a7fcf06e89c06a726ff32c40dc` | 20,690,752 |
+| mldsa65-lock-v2 (fips204) | `0x13dd23f46a029006a74877f55b51c6082a552b9c9cfb7ceec906f9f3cd6d7176` | 20,690,623 |
+| mldsa87-lock-v2 (fips204) | `0x62be8df0e64569d28c6575a3e92950ed4a62f53c1beffcc71d4ce53107509970` | 20,690,772 |
+| falcon512-lock-v2 (pre-optimisation) | `0x94c202157b8e8cf214b05005bf198d3f2267355861c080f0d35d9e44eb841079` | 20,691,270 |
+| falcon1024-lock-v2 (pre-optimisation) | `0x4713bf6e88d51a297943a98be575936e25d5487aa97d964b22eef3a4dd1313b1` | 20,691,281 |
 
 ### Legacy v1 (deprecated)
 
@@ -143,15 +167,20 @@ Sits immediately after the SPHINCS+ range (48..=59) so a future unified multisig
 ```
 ckb-mldsa-lock/
 ├── contracts/
-│   ├── mldsa-lock/          (DEPRECATED) v1 C lock — ML-DSA-65 only
-│   ├── mldsa-lock-v2/       v2 Rust contract for ML-DSA-{44,65,87}
-│   │   ├── src/             lib.rs + entry.rs (shared logic)
-│   │   ├── bin/             {mldsa44,mldsa65,mldsa87}.rs (6-line stubs)
-│   │   ├── ckb-contract.ld  Page-aligned linker script
-│   │   └── .cargo/config.toml  -C target-feature=-a (no atomics)
-│   └── falcon-lock-v2/      v2 Rust contract for Falcon-{512,1024}
-│       ├── src/             lib.rs + entry.rs (Falcon-specific entry)
-│       └── bin/             {falcon512,falcon1024}.rs
+│   ├── mldsa-lock/              (DEPRECATED) v1 C lock — ML-DSA-65 only
+│   ├── mldsa-lock-v2/           v2 ML-DSA contract via fips204 crate
+│   │   ├── src/                 lib.rs + entry.rs (shared logic)
+│   │   ├── bin/                 {mldsa44,mldsa65,mldsa87}.rs stubs
+│   │   ├── ckb-contract.ld      page-aligned linker script
+│   │   └── .cargo/config.toml   -C target-feature=-a (no atomics)
+│   ├── mldsa-lock-v2-rust/      v2 ML-DSA contract via RustCrypto ml-dsa crate
+│   │   ├── src/                 lib.rs + entry.rs + helpers.rs + streamer.rs
+│   │   ├── bin/                 {mldsa44,mldsa65,mldsa87}.rs stubs
+│   │   │                        (each with required-features = ["variant-XX"])
+│   │   └── ckb-contract.ld      shared linker script
+│   └── falcon-lock-v2/          v2 Rust contract for Falcon-{512,1024}
+│       ├── src/                 lib.rs + entry.rs (Falcon-specific entry)
+│       └── bin/                 {falcon512,falcon1024}.rs
 ├── crates/
 │   ├── sdk-rust/            Legacy v1 SDK (ML-DSA-65 only) — kept for v1 cells
 │   └── molecule-types/      Legacy v1 witness types
@@ -239,7 +268,7 @@ rustup component add rust-src --toolchain nightly-2025-01-01-x86_64-unknown-linu
 ### Build the v2 contracts
 
 ```bash
-# ML-DSA (44/65/87)
+# ML-DSA / fips204 backend (44/65/87)
 cd contracts/mldsa-lock-v2 && cargo build --release
 ls target/riscv64imac-unknown-none-elf/release/mldsa{44,65,87}-lock-v2
 # 49,904 bytes each
@@ -247,10 +276,21 @@ ls target/riscv64imac-unknown-none-elf/release/mldsa{44,65,87}-lock-v2
 # Falcon (512/1024)
 cd ../falcon-lock-v2 && cargo build --release
 ls target/riscv64imac-unknown-none-elf/release/falcon{512,1024}-lock-v2
-# 45,808 bytes each
+# 49,904 bytes each (session-9, opt-level=3)
+
+# ML-DSA / RustCrypto ml-dsa backend (44/65/87)
+# Each variant must be built with a separate cargo invocation because its
+# `required-features = ["variant-XX"]` gate compiles only that monomorphisation.
+cd ../mldsa-lock-v2-rust
+for V in 44 65 87; do
+  cargo build --release --no-default-features --features variant-$V \
+    --bin mldsa$V-lock-v2-rust
+done
+ls target/riscv64imac-unknown-none-elf/release/mldsa{44,65,87}-lock-v2-rust
+# 74,408 / 74,408 / 78,504 bytes
 ```
 
-Both crates target `riscv64imac-unknown-none-elf` with `-C target-feature=-a` (CKB-VM does not implement the RISC-V A-extension; including atomics produces `InvalidInstruction` traps at runtime). The linker script forces `.rodata` to a 4 KB page boundary so that no page is shared between the R-X `.text` segment and the R-only `.rodata` segment — without this CKB-VM halts with `MemWriteOnFreezedPage` during cell loading.
+All three crates target `riscv64imac-unknown-none-elf`. The `mldsa-lock-v2` and `falcon-lock-v2` crates use `-C target-feature=-a` via `.cargo/config.toml` (CKB-VM does not implement the RISC-V A-extension; including atomics produces `InvalidInstruction` traps at runtime). The `mldsa-lock-v2-rust` crate gets the same effect via `ckb-std 1.1`'s `dummy-atomic` feature, which replaces both the rustflag and the nightly `build-std` requirement. All three use a linker script that forces `.rodata` to a 4 KB page boundary so that no page is shared between the R-X `.text` segment and the R-only `.rodata` segment — without this CKB-VM halts with `MemWriteOnFreezedPage` during cell loading.
 
 ### Run the in-process tests
 
@@ -334,17 +374,31 @@ The contract crates use `default-features = false, features = ["verifying", "ckb
 
 ## Cycle and witness budget summary
 
-| Variant | Witness lock (B) | Verify cycles | Cycle headroom (vs 70M / script) |
-|---|---|---|---|
-| **falcon512** | **1,564** | **1.97M** | **35×** |
-| falcon1024 | 3,074 | 3.01M | 23× |
-| mldsa44 | 3,733 | (estimated <8M) | >8× |
-| mldsa65 | 5,262 | 9.8M | 7× |
-| mldsa87 | 7,220 | (estimated <12M) | >5× |
+Session-9 numbers — all measured on a signed single-input single-output spend via `ckb-debugger` on the deployed binaries, not on isolated verify benchmarks.
 
-For a single spend transaction, **Falcon-512 is the leanest PQ option** by both metrics — 3.4× smaller witness and 5× faster verify than ML-DSA-65. The trade-off is that Falcon depends on a draft standard (FIPS 206 was not final at the time `fn-dsa` v0.3 shipped). ML-DSA-44 is the leanest *standardised* option.
+| Variant | Witness lock (B) | Verify cycles | Headroom (vs 70M/script) |
+|---|---:|---:|---:|
+| **falcon512** | **1,564** | **1.09M** | **64×** |
+| falcon1024 | 3,074 | 1.97M | 35× |
+| mldsa44-lock-v2-rust | 3,733 | 3.63M | 19× |
+| mldsa65-lock-v2-rust | 5,262 | 5.56M | 12× |
+| mldsa87-lock-v2-rust | 7,220 | 8.76M | 8× |
+| mldsa65-lock-v2 (fips204, for reference) | 5,262 | 10.24M | 6.8× |
+
+**Falcon-512 verifies in ~1.1M cycles** — on par with `secp256k1-blake160` (~1.7M), for a post-quantum lock. 3.4× smaller witness and 5× faster verify than `mldsa65-lock-v2-rust`. The trade-off is that Falcon depends on a draft standard (FIPS 206 was not final at the time `fn-dsa` v0.3 shipped). If you want a standardised ML-DSA lock, `mldsa44-lock-v2-rust` is the leanest option at 3.63M cycles.
 
 For multisig, the witness savings compound — every additional cosigner adds another full pk + sig pair.
+
+### Session-9 optimisation story
+
+All cycle numbers above reflect these optimisations applied in session 9:
+
+1. **Dropped `overflow-checks`** in release profile. PQ verify code is dominated by NTT multiplications inside polynomial rings; every `*` and `+` was getting a wrapping check that the crates were going to reduce modularly anyway. Result: `mldsa65-rust` −9.6%, `falcon512` −13.8%, `falcon1024` −12.3%.
+2. **`lto = "fat"`** across all deps (was `true`/thin for some).
+3. **Bumped falcon from `opt-level = "z"` to `opt-level = 3`.** Falcon was originally profile-tuned for binary size; with the session-9 page-aligned binary sizes, there was 3 KB of headroom per variant before crossing the next 4 KB page boundary, which was enough to spend on inlining the fn-dsa-vrfy hot loops. Result: `falcon512` −35%, `falcon1024` −25% (on top of the `overflow-checks` win).
+4. **Separate RustCrypto `ml-dsa` backend for ML-DSA** (`mldsa-lock-v2-rust`). XuJiandong's [`ckb-rust-algorithm-benchmarks#9`](https://github.com/XuJiandong/ckb-rust-algorithm-benchmarks/pull/9) showed the RustCrypto crate at ~25% fewer cycles than `fips204` in isolation; applying `overflow-checks = false` on top lifted that to ~45% at mldsa-65. Deployed as a sibling lock, not a replacement — integrators pick by `code_hash`.
+
+The `feature-gate each variant separately` experiment was a bust — LTO was already perfectly dead-code-eliminating the unused `MlDsa44/65/87` monomorphisations, so per-variant features saved zero bytes. The flags are still wired up in `contracts/mldsa-lock-v2-rust/Cargo.toml` for future tuning but don't currently matter.
 
 ---
 
