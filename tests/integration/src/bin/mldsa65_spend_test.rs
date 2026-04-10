@@ -65,14 +65,16 @@ use ckb_types::{
 
 const DEFAULT_RPC: &str = "https://testnet.ckb.dev";
 
-// All 8 lock cells now live in a single deploy tx as of session 9
-// (2026-04-09). The original session-4 / session-7 txs are still
-// referenced by any existing cells locked under those code_hashes,
-// but for new spends the type_id stays the same and the dep points
-// at the latest tx — ckb-cli's type_id upgrade flow updates migration
-// state atomically.
+// Session-9 deploy tx (2026-04-09) — still holds the 3 C-based
+// mldsa-lock-v2 cells (fips204 backend, unchanged in session 10).
 const SESSION9_DEPLOY_TX: H256 =
     h256!("0x39b1c11ed7ca2e4a0491c69d105ee07e5659e88109661d4b48f2ff39a45cf1f1");
+
+// Session-10 deploy tx (2026-04-10) — overflow-checks re-enabled per
+// core-dev review. Holds the 5 Rust cells: falcon512 @ 0, falcon1024 @ 1,
+// mldsa44-rust @ 2, mldsa65-rust @ 3, mldsa87-rust @ 4.
+const SESSION10_DEPLOY_TX: H256 =
+    h256!("0x1074b1ac79213c22b5e32a0fde44a858a47f9575c9f54006a1deb80d32070cb1");
 
 // These are SCRIPT HASHES (hash of the cell's type script), NOT the TYPE_ID
 // discriminator. Consumers set `code_hash` to these + `hash_type: type`.
@@ -838,23 +840,32 @@ fn resolve_code_hash(opts: &Opts, param_id: ParamId, backend: Backend) -> String
 ///   6: mldsa65-lock-v2-rust
 ///   7: mldsa87-lock-v2-rust
 fn default_deploy_idx(param_id: ParamId, backend: Backend) -> u32 {
+    // Session 10 split the cells across two txs:
+    //   SESSION9:  fips204 C cells → mldsa44 @ 0, mldsa65 @ 1, mldsa87 @ 2
+    //   SESSION10: Rust cells      → falcon512 @ 0, falcon1024 @ 1,
+    //              mldsa44-rust @ 2, mldsa65-rust @ 3, mldsa87-rust @ 4
     match (backend, param_id) {
         (Backend::Fips204, ParamId::Mldsa44) => 0,
         (Backend::Fips204, ParamId::Mldsa65) => 1,
         (Backend::Fips204, ParamId::Mldsa87) => 2,
-        (_, ParamId::Falcon512) => 3,
-        (_, ParamId::Falcon1024) => 4,
-        (Backend::MlDsa, ParamId::Mldsa44) => 5,
-        (Backend::MlDsa, ParamId::Mldsa65) => 6,
-        (Backend::MlDsa, ParamId::Mldsa87) => 7,
+        (_, ParamId::Falcon512) => 0,
+        (_, ParamId::Falcon1024) => 1,
+        (Backend::MlDsa, ParamId::Mldsa44) => 2,
+        (Backend::MlDsa, ParamId::Mldsa65) => 3,
+        (Backend::MlDsa, ParamId::Mldsa87) => 4,
     }
 }
 
-/// Per-variant default deploy tx hash. As of session 9 all cells live in one
-/// tx; the `_param_id` / `_backend` args are kept for interface symmetry and
-/// future forks.
-fn default_deploy_tx(_param_id: ParamId, _backend: Backend) -> H256 {
-    SESSION9_DEPLOY_TX
+///
+/// Routes to the correct deploy tx. C-based fips204 ML-DSA cells remain at
+/// SESSION9; all Rust cells (falcon + ml-dsa backend) moved to SESSION10
+/// after the overflow-checks re-enablement.
+fn default_deploy_tx(param_id: ParamId, backend: Backend) -> H256 {
+    if is_falcon(param_id) || backend == Backend::MlDsa {
+        SESSION10_DEPLOY_TX
+    } else {
+        SESSION9_DEPLOY_TX
+    }
 }
 
 fn parse_hash_type(s: &str) -> Result<ScriptHashType, String> {

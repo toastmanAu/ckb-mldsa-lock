@@ -2,7 +2,7 @@
 
 **Target**: land all 5 post-quantum lock variants (mldsa44/65/87 × fips204+ml-dsa backends, falcon512/1024) inside the Quantum Purse wallet, following the scheme-threading pattern already established on the `feat/mldsa65` branch.
 
-**Authored**: 2026-04-10, after session 9 of ckb-mldsa-lock (all 5 locks deployed + smoke-spent on testnet under tx `0x39b1c11e...a45cf1f1`).
+**Authored**: 2026-04-10, after session 9 of ckb-mldsa-lock. Updated same day after session 10: overflow-checks re-enabled per core-dev review, 5 Rust cells redeployed to tx `0x1074b1ac...0cb1`. All `code_hash` values unchanged (type_id stable). See `docs/mainnet-readiness-checklist.md` for the path from testnet to mainnet.
 
 **Audience**: future-Phill, starting cold tomorrow.
 
@@ -287,9 +287,23 @@ PR 1 is the only non-negotiable one — everything else builds on it. PRs 2-5 ca
 - [ ] Confirm the session-9 deploy tx `0x39b1c11ed7ca2e4a0491c69d105ee07e5659e88109661d4b48f2ff39a45cf1f1` is still reachable on testnet and the 8 cells are unspent. Simple: `ckb-cli rpc get_transaction --hash 0x39b1c11e...` — status should be `committed`.
 - [ ] Confirm you have the deploy wallet password for the session-9 owner (`0xa776bf02d19cafa3749d906cc2c9ab1cf1e80ff7`) — needed for any further deploys or funding operations.
 
-## Reference — session-9 smoke spend chain (proves the on-chain contracts work)
+## Reference — smoke spend chains (proves the on-chain contracts work)
 
-These 5 txs are the reference implementation of "the wallet should produce output that looks like this". If the migrated wallet's sign output ever diverges from what these produced, diff the bytes.
+### Session 10 (overflow-checks ON, current)
+
+Deploy tx: `0x1074b1ac79213c22b5e32a0fde44a858a47f9575c9f54006a1deb80d32070cb1`
+
+| Variant | Spend tx | Block |
+|---|---|---|
+| falcon512-lock-v2 | `0xad49b163fbad4155eeb624cb5b48bef53337e72fc6c376385883f88fbdb7cf97` | 20716484 |
+| falcon1024-lock-v2 | `0x8f28228e4a3d52de344b183bad039c2fb3fdb28d7d041dc173f125ec83c10419` | 20716488 |
+| mldsa44-lock-v2-rust | `0xfbcfe8316ff1b0988d59c7b154630f9f9c2b76e249dd6682187bba5656d7c5d4` | 20716494 |
+| mldsa65-lock-v2-rust | `0x13404ea7597ae11f243df674c106c37b9eef40e5e251bac54ee4d185d03f8c88` | 20716498 |
+| mldsa87-lock-v2-rust | `0xcde72472333b2dd5ae73b829f7161946d2295b8db8e5f2d3156567f6731abd48` | 20716503 |
+
+### Session 9 (overflow-checks off, superseded)
+
+Deploy tx: `0x39b1c11ed7ca2e4a0491c69d105ee07e5659e88109661d4b48f2ff39a45cf1f1`
 
 | Variant | Spend tx | Block |
 |---|---|---|

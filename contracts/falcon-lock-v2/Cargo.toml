@@ -34,7 +34,12 @@ lto = "fat"          # fat LTO across all deps
 codegen-units = 1    # single CGU for best LTO
 panic = "abort"      # no unwind tables
 strip = true         # strip symbols
-overflow-checks = false  # fn-dsa-vrfy's NTT has many multiplications; runtime
-                         # bounds checks bloat .text and slow verify. The crate
-                         # does its own modular reductions, so they add nothing.
-                         # Mirror of the change applied to mldsa-lock-v2-rust.
+overflow-checks = true   # Re-enabled per core-dev review: profile-wide
+                         # disable also drops checks in non-NTT code (length
+                         # math, witness deserialization, index arithmetic)
+                         # where a silent wrap on attacker-controlled input
+                         # is a soundness risk, not a correctness one. Cycle
+                         # savings from disabling were ~10–14%; acceptable
+                         # regression for on-chain verifier. If NTT inner-loop
+                         # cycles become a constraint, isolate hot path with
+                         # explicit `wrapping_mul` rather than profile flag.

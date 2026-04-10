@@ -102,10 +102,15 @@ ml-dsa = { git = "https://github.com/RustCrypto/signatures", rev = "66473ec", de
 
 [profile.release]
 opt-level = 3        # match XuJiandong's ref — speed > size for PQ verify
-overflow-checks = false  # ML-DSA core has thousands of NTT mults; bounds-check
-                         # bloat dwarfs any safety benefit and the crate does
-                         # its own explicit modular reductions. Reduces .text
-                         # from 70 KB → (measure below).
+overflow-checks = true   # Re-enabled per core-dev review. Same rationale as
+                         # contracts/falcon-lock-v2: overflow-checks is a
+                         # profile-wide flag, so disabling it also removes
+                         # checks outside the NTT hot path (length math,
+                         # witness parsing, indexing) where silent wraps on
+                         # attacker-controlled witness bytes are a soundness
+                         # risk. Cycle cost measured post-rebuild; if NTT
+                         # becomes the bottleneck, isolate with explicit
+                         # `wrapping_mul` instead of flipping this flag.
 lto = "fat"          # fat LTO across all deps (was `true` = thin)
 codegen-units = 1    # single CGU for best LTO
 panic = "abort"      # no unwind tables

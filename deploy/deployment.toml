@@ -6,14 +6,18 @@
 #   - falcon{512,1024}-lock-v2 (original slow build)
 #     in tx 0x0e15396cff81e32b8abbcb37f9cbdce87b7edc60fc4150220c081bf85822bbc0
 #
-# This deploy (session 9, 2026-04-09):
-#   - NEW: mldsa{44,65,87}-lock-v2-rust (RustCrypto ml-dsa backend,
-#     45% fewer cycles than the fips204 variant at mldsa65). Fresh
-#     deploys, distinct code_hashes from the fips204 sibling per the
-#     "separate deployment" design decision.
-#   - UPGRADE: falcon{512,1024}-lock-v2 rebuilt with overflow-checks=off
-#     + opt-level=3 + fat-lto. 44% / 35% fewer cycles, SAME code_hash
-#     because ckb-cli type_id upgrade preserves the script hash.
+# Session 9 (2026-04-09):
+#   - NEW: mldsa{44,65,87}-lock-v2-rust (RustCrypto ml-dsa backend).
+#   - UPGRADE: falcon{512,1024}-lock-v2 rebuilt with opt-level=3 + fat-lto.
+#
+# Session 10 (2026-04-10):
+#   - UPGRADE: all 5 Rust cells rebuilt with overflow-checks=true per
+#     core-dev review. Profile-wide overflow-checks=false also removed
+#     checks from non-NTT code (witness parsing, index math) where
+#     silent wraps on attacker input are a soundness risk. Cycle cost
+#     +6-12% across variants; acceptable for on-chain verifiers.
+#   - Deploy tx: 0x1074b1ac79213c22b5e32a0fde44a858a47f9575c9f54006a1deb80d32070cb1
+#   - Smoke-spent all 5 variants on testnet.
 #
 # NOTE: the v1 C `mldsa-lock` cell stays deployed on testnet at its
 # original tx_hash 0xba4a6560... under an account whose password was lost.

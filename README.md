@@ -18,6 +18,8 @@
 All cycle numbers are from `ckb-testtool`/`ckb-debugger` on signed round-trip transactions (i.e. full CighashAll stream + single-input single-output verify), not from isolated-verify benchmarks. See `docs/benchmark-report.md` for methodology.
 
 > **Testnet only.** Not audited. Do not use for real funds. The Falcon variants depend on the FIPS 206 *draft* — wire format may change before standardisation.
+>
+> **Before integrating**, read [**docs/trust-model.md**](./docs/trust-model.md) — it documents which locks are upgradeable, who controls the upgrade key, which reference style (`type_script` vs `code_hash`) matches which trust model, and the full mainnet readiness checklist.
 
 ---
 
@@ -58,11 +60,12 @@ There's also a deprecated v1 C lock (`contracts/mldsa-lock/`) that was the origi
 
 ### Deploy transactions
 
-As of session 9 (2026-04-09), all 8 cells live in a single deploy tx. Previous-session tx hashes (session 4, session 7) remain valid references — consumers using those `cell_dep`s automatically get the new binaries via ckb-cli's type_id upgrade flow. The `code_hash`es for the 5 pre-session-9 variants are stable across the upgrade.
+As of session 10 (2026-04-10), the 5 Rust-based cells (falcon512/1024-lock-v2, mldsa44/65/87-lock-v2-rust) were upgraded in-place via type_id to re-enable `overflow-checks = true` following core-dev review. The 3 C-based mldsa-lock-v2 cells remain at the session-9 tx. All `code_hash`es are stable across upgrades — consumers don't need to change anything.
 
 | Deploy tx | Block | Cell deps |
 |---|---|---|
-| `0x39b1c11ed7ca2e4a0491c69d105ee07e5659e88109661d4b48f2ff39a45cf1f1` (session 9) | — | mldsa44-lock-v2 @ 0, mldsa65-lock-v2 @ 1, mldsa87-lock-v2 @ 2, falcon512-lock-v2 @ 3, falcon1024-lock-v2 @ 4, **mldsa44-lock-v2-rust @ 5, mldsa65-lock-v2-rust @ 6, mldsa87-lock-v2-rust @ 7** |
+| `0x1074b1ac79213c22b5e32a0fde44a858a47f9575c9f54006a1deb80d32070cb1` (session 10 — overflow-checks on) | 20,716,841 | falcon512 @ 0, falcon1024 @ 1, mldsa44-rust @ 2, mldsa65-rust @ 3, mldsa87-rust @ 4 |
+| `0x39b1c11ed7ca2e4a0491c69d105ee07e5659e88109661d4b48f2ff39a45cf1f1` (session 9 — fips204 C cells) | — | mldsa44-lock-v2 @ 0, mldsa65-lock-v2 @ 1, mldsa87-lock-v2 @ 2 |
 | `0xb1a05b5000cecdcb51a1518e96cb13d81a1b28cea21d861a64081430cb35ae88` (session 4, fips204 only) | 20,690,678 | mldsa44/65/87 @ 0/1/2 |
 | `0x0e15396cff81e32b8abbcb37f9cbdce87b7edc60fc4150220c081bf85822bbc0` (session 7, original falcon) | 20,691,215 | falcon512/1024 @ 0/1 |
 
@@ -70,15 +73,25 @@ When building a transaction that spends a v2-locked cell, add the relevant deplo
 
 ### On-chain spends (proof of life)
 
-Each variant has been signed off-chain and verified by a real testnet miner. The session-9 spends (listed first) were all produced in a single daisy-chained sweep — each tx spends a cell locked under one variant and creates a cell locked under the next, proving that: (a) the ml-dsa backend signatures validate on-chain, (b) the upgraded falcon binaries accept spends under the same code_hash, and (c) the witness/args format is stable across all 5 variants.
+Each variant has been signed off-chain and verified by a real testnet miner. Session-10 spends prove the overflow-checks-on binaries verify on-chain.
+
+| Variant | Session-10 spend tx (overflow-checks on) | Block |
+|---|---|---|
+| **falcon512-lock-v2** | `0xad49b163fbad4155eeb624cb5b48bef53337e72fc6c376385883f88fbdb7cf97` | 20,716,484 |
+| **falcon1024-lock-v2** | `0x8f28228e4a3d52de344b183bad039c2fb3fdb28d7d041dc173f125ec83c10419` | 20,716,488 |
+| **mldsa44-lock-v2-rust** | `0xfbcfe8316ff1b0988d59c7b154630f9f9c2b76e249dd6682187bba5656d7c5d4` | 20,716,494 |
+| **mldsa65-lock-v2-rust** | `0x13404ea7597ae11f243df674c106c37b9eef40e5e251bac54ee4d185d03f8c88` | 20,716,498 |
+| **mldsa87-lock-v2-rust** | `0xcde72472333b2dd5ae73b829f7161946d2295b8db8e5f2d3156567f6731abd48` | 20,716,503 |
+
+Session-9 spends (overflow-checks off, now superseded):
 
 | Variant | Session-9 spend tx | Block |
 |---|---|---|
-| **mldsa44-lock-v2-rust** | `0x46fd79bca33ea1760ac2ec2a42648c3ed606eb13eec9b3100b423869827d38f4` | 20,711,308 |
-| **mldsa65-lock-v2-rust** | `0x12170078a25a20fb816b94512d6f3527aa4d9e0579bd2cef7dea2b6aef6ed3e6` | 20,711,313 |
-| **mldsa87-lock-v2-rust** | `0xa8df06e16b6802210f8d07a0f4a23da771037931b55c1ded616671ecd97a638d` | 20,711,318 |
-| **falcon512-lock-v2** (upgraded binary) | `0x94c2c05b8b5034f0dd79f2fbe81f5b01499411a6890d678f8b962375d034c2c5` | 20,711,322 |
-| **falcon1024-lock-v2** (upgraded binary) | `0x7b88abf9a3185435967132af1fb4d4cf269be660a20a86b168da365520a569c1` | 20,711,327 |
+| mldsa44-lock-v2-rust | `0x46fd79bca33ea1760ac2ec2a42648c3ed606eb13eec9b3100b423869827d38f4` | 20,711,308 |
+| mldsa65-lock-v2-rust | `0x12170078a25a20fb816b94512d6f3527aa4d9e0579bd2cef7dea2b6aef6ed3e6` | 20,711,313 |
+| mldsa87-lock-v2-rust | `0xa8df06e16b6802210f8d07a0f4a23da771037931b55c1ded616671ecd97a638d` | 20,711,318 |
+| falcon512-lock-v2 | `0x94c2c05b8b5034f0dd79f2fbe81f5b01499411a6890d678f8b962375d034c2c5` | 20,711,322 |
+| falcon1024-lock-v2 | `0x7b88abf9a3185435967132af1fb4d4cf269be660a20a86b168da365520a569c1` | 20,711,327 |
 
 Earlier session-4 / session-7 proof-of-life spends (original slower binaries, same code_hashes):
 
@@ -374,29 +387,29 @@ The contract crates use `default-features = false, features = ["verifying", "ckb
 
 ## Cycle and witness budget summary
 
-Session-9 numbers — all measured on a signed single-input single-output spend via `ckb-debugger` on the deployed binaries, not on isolated verify benchmarks.
+Session-10 numbers (overflow-checks ON) — all measured on a signed single-input single-output spend via `ckb-debugger` on the deployed binaries, not on isolated verify benchmarks.
 
 | Variant | Witness lock (B) | Verify cycles | Headroom (vs 70M/script) |
 |---|---:|---:|---:|
-| **falcon512** | **1,564** | **1.09M** | **64×** |
-| falcon1024 | 3,074 | 1.97M | 35× |
-| mldsa44-lock-v2-rust | 3,733 | 3.63M | 19× |
-| mldsa65-lock-v2-rust | 5,262 | 5.56M | 12× |
-| mldsa87-lock-v2-rust | 7,220 | 8.76M | 8× |
+| **falcon512** | **1,564** | **1.16M** | **60×** |
+| falcon1024 | 3,074 | 2.13M | 33× |
+| mldsa44-lock-v2-rust | 3,733 | 4.04M | 17× |
+| mldsa65-lock-v2-rust | 5,262 | 6.15M | 11× |
+| mldsa87-lock-v2-rust | 7,220 | 9.59M | 7× |
 | mldsa65-lock-v2 (fips204, for reference) | 5,262 | 10.24M | 6.8× |
 
-**Falcon-512 verifies in ~1.1M cycles** — on par with `secp256k1-blake160` (~1.7M), for a post-quantum lock. 3.4× smaller witness and 5× faster verify than `mldsa65-lock-v2-rust`. The trade-off is that Falcon depends on a draft standard (FIPS 206 was not final at the time `fn-dsa` v0.3 shipped). If you want a standardised ML-DSA lock, `mldsa44-lock-v2-rust` is the leanest option at 3.63M cycles.
+**Falcon-512 verifies in ~1.16M cycles** — on par with `secp256k1-blake160` (~1.7M), for a post-quantum lock. 3.4× smaller witness and 5× faster verify than `mldsa65-lock-v2-rust`. The trade-off is that Falcon depends on a draft standard (FIPS 206 was not final at the time `fn-dsa` v0.3 shipped). If you want a standardised ML-DSA lock, `mldsa44-lock-v2-rust` is the leanest option at 4.04M cycles.
 
 For multisig, the witness savings compound — every additional cosigner adds another full pk + sig pair.
 
-### Session-9 optimisation story
+### Optimisation history (sessions 9–10)
 
-All cycle numbers above reflect these optimisations applied in session 9:
+All cycle numbers above reflect the session-10 state: `overflow-checks = true` across all Rust locks (re-enabled after core-dev review), with `lto = "fat"` + `opt-level = 3` retained from session 9.
 
-1. **Dropped `overflow-checks`** in release profile. PQ verify code is dominated by NTT multiplications inside polynomial rings; every `*` and `+` was getting a wrapping check that the crates were going to reduce modularly anyway. Result: `mldsa65-rust` −9.6%, `falcon512` −13.8%, `falcon1024` −12.3%.
-2. **`lto = "fat"`** across all deps (was `true`/thin for some).
-3. **Bumped falcon from `opt-level = "z"` to `opt-level = 3`.** Falcon was originally profile-tuned for binary size; with the session-9 page-aligned binary sizes, there was 3 KB of headroom per variant before crossing the next 4 KB page boundary, which was enough to spend on inlining the fn-dsa-vrfy hot loops. Result: `falcon512` −35%, `falcon1024` −25% (on top of the `overflow-checks` win).
-4. **Separate RustCrypto `ml-dsa` backend for ML-DSA** (`mldsa-lock-v2-rust`). XuJiandong's [`ckb-rust-algorithm-benchmarks#9`](https://github.com/XuJiandong/ckb-rust-algorithm-benchmarks/pull/9) showed the RustCrypto crate at ~25% fewer cycles than `fips204` in isolation; applying `overflow-checks = false` on top lifted that to ~45% at mldsa-65. Deployed as a sibling lock, not a replacement — integrators pick by `code_hash`.
+1. ~~**Dropped `overflow-checks`** in release profile (session 9).~~ **Reverted in session 10** per core-dev review. The NTT inner-loop argument was correct in isolation but `overflow-checks` is a *profile-wide* flag — disabling it also dropped checks on non-NTT code paths (witness length parsing, index arithmetic, deserialization) where a silent integer wrap on attacker-controlled input is a soundness risk, not a performance concern. Re-enabling costs 6–12% cycles depending on variant; acceptable for on-chain lock scripts. If NTT arithmetic becomes a bottleneck in future, the correct fix is explicit `wrapping_mul` in the hot loop, not a profile flag that also affects glue code.
+2. **`lto = "fat"`** across all deps (was `true`/thin for some). Retained in session 10.
+3. **Bumped falcon from `opt-level = "z"` to `opt-level = 3`.** Falcon was originally profile-tuned for binary size; with page-aligned binary sizes, there was headroom to spend on inlining the fn-dsa-vrfy hot loops. Result: `falcon512` −35%, `falcon1024` −25%. Retained in session 10.
+4. **Separate RustCrypto `ml-dsa` backend for ML-DSA** (`mldsa-lock-v2-rust`). XuJiandong's [`ckb-rust-algorithm-benchmarks#9`](https://github.com/XuJiandong/ckb-rust-algorithm-benchmarks/pull/9) showed the RustCrypto crate at ~25% fewer cycles than `fips204` in isolation. Deployed as a sibling lock, not a replacement — integrators pick by `code_hash`.
 
 The `feature-gate each variant separately` experiment was a bust — LTO was already perfectly dead-code-eliminating the unused `MlDsa44/65/87` monomorphisations, so per-variant features saved zero bytes. The flags are still wired up in `contracts/mldsa-lock-v2-rust/Cargo.toml` for future tuning but don't currently matter.
 
