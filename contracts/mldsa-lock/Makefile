@@ -38,9 +38,24 @@ INCLUDES := \
     -I $(GCC_RISCV_INCLUDE) \
     -I /usr/include/newlib
 
-# ML-DSA-65 only, portable C, verify only
+# ML-DSA parameter set (44 / 65 / 87). Default is 65 (NIST level 3).
+# Override with: make MLDSA_PARAM=44   → produces build/mldsa44-lock
+#                make MLDSA_PARAM=65   → produces build/mldsa-lock  (default)
+#                make MLDSA_PARAM=87   → produces build/mldsa87-lock
+MLDSA_PARAM ?= 65
+
+# Validate value
+ifneq ($(MLDSA_PARAM),44)
+ifneq ($(MLDSA_PARAM),65)
+ifneq ($(MLDSA_PARAM),87)
+$(error MLDSA_PARAM must be 44, 65, or 87 (got: $(MLDSA_PARAM)))
+endif
+endif
+endif
+
+# Portable C, verify only
 MLDSA_DEFS := \
-    -DMLD_CONFIG_PARAMETER_SET=65 \
+    -DMLD_CONFIG_PARAMETER_SET=$(MLDSA_PARAM) \
     -DMLDSA_NATIVE_PORTABLE=1 \
     -DMLDSA_NO_SIGN=1 \
     -DMLDSA_NO_KEYGEN=1 \
@@ -60,8 +75,16 @@ CONTRACT_SRCS := \
 
 ALL_SRCS := $(CONTRACT_SRCS) $(MLDSA_SRCS)
 
-TARGET  := build/mldsa-lock
 BUILD   := build
+
+# Default -65 build keeps the existing filename (backward compat with
+# deployment scripts + test vectors). Non-default variants add the
+# parameter as a suffix.
+ifeq ($(MLDSA_PARAM),65)
+TARGET  := $(BUILD)/mldsa-lock
+else
+TARGET  := $(BUILD)/mldsa$(MLDSA_PARAM)-lock
+endif
 
 .PHONY: all clean size
 

@@ -136,7 +136,7 @@ static int parse_mldsa_witness(
 }
 
 /* Maximum witness buffer: pubkey + sig + Molecule overhead (generously sized) */
-#define MAX_WITNESS_LEN  (MLDSA65_PUBLICKEY_BYTES + MLDSA65_SIGNATURE_BYTES + 512)
+#define MAX_WITNESS_LEN  (MLDSA_PUBLICKEY_BYTES + MLDSA_SIGNATURE_BYTES + 512)
 #define BLAKE2B_BLOCK_SIZE 32
 #define MAX_TX_HASH_LEN  32
 
@@ -193,7 +193,7 @@ int main() {
 
     if (args[ARGS_VERSION_OFFSET] != WITNESS_VERSION)  return ERROR_INVALID_VERSION;
     if (args[ARGS_ALGO_OFFSET]    != ALGO_ID_MLDSA)    return ERROR_INVALID_ALGO;
-    if (args[ARGS_PARAM_OFFSET]   != PARAM_ID_MLDSA65) return ERROR_INVALID_PARAM;
+    if (args[ARGS_PARAM_OFFSET]   != MLDSA_PARAM_ID) return ERROR_INVALID_PARAM;
 
     const uint8_t *expected_pubkey_hash = args + ARGS_PUBKEY_HASH_OFFSET;
 
@@ -246,10 +246,10 @@ int main() {
 
     if (wit_version != WITNESS_VERSION)  return ERROR_INVALID_VERSION;
     if (wit_algo    != ALGO_ID_MLDSA)    return ERROR_INVALID_ALGO;
-    if (wit_param   != PARAM_ID_MLDSA65) return ERROR_INVALID_PARAM;
+    if (wit_param   != MLDSA_PARAM_ID) return ERROR_INVALID_PARAM;
     if (wit_flags   != 0x00)             return ERROR_WITNESS_MALFORMED;  /* reserved, must be 0 */
-    if (pubkey_len  != MLDSA65_PUBLICKEY_BYTES) return ERROR_WITNESS_MALFORMED;
-    if (sig_len     != MLDSA65_SIGNATURE_BYTES) return ERROR_WITNESS_MALFORMED;
+    if (pubkey_len  != MLDSA_PUBLICKEY_BYTES) return ERROR_WITNESS_MALFORMED;
+    if (sig_len     != MLDSA_SIGNATURE_BYTES) return ERROR_WITNESS_MALFORMED;
 
     /* 5. Verify pubkey hash matches args — constant-time comparison (CRIT-2) */
     uint8_t computed_hash[BLAKE2B_BLOCK_SIZE];
@@ -269,7 +269,7 @@ int main() {
     /* 7. Verify ML-DSA-65 signature */
     DBG_HEX("calling_verify", g_signing_msg, 32);
 
-    ret = mldsa65_verify(pubkey,
+    ret = mldsa_verify(pubkey,
         g_signing_msg, BLAKE2B_BLOCK_SIZE,
         (const uint8_t *)CKB_MLDSA_DOMAIN, CKB_MLDSA_DOMAIN_LEN,
         sig, sig_len);

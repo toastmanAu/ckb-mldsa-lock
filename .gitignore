@@ -2,6 +2,8 @@
 contracts/mldsa-lock/build/
 contracts/mldsa-lock/deps/
 contracts/mldsa-lock/tests/gen_test_vector
+contracts/mldsa-lock/tests/gen_test_vector_44
+contracts/mldsa-lock/tests/gen_test_vector_87
 contracts/mldsa-lock/tests/mock_tx*.json
 contracts/mldsa-lock/tests/gen_pass.log
 contracts/mldsa-lock/tests/gen_fail.log
@@ -18,6 +20,11 @@ dist/
 # Deploy artifacts (keep deployment.toml, ignore generated)
 deploy/deployment-info.json
 deploy/migrations/
+deploy/*backup*
+
+# Local agent/session state (never commit)
+.remember/
+graphify-out/
 
 # Editor
 .vscode/
